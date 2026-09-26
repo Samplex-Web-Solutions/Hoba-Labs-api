@@ -1,6 +1,7 @@
-const crypto = require('crypto');
+import crypto from 'crypto';
 
-const verifyTelegramWebAppData = (req, res, next) => {
+// --- Verifies Telegram Mini App initData (used for anything the FRONTEND calls directly) ---
+export const verifyTelegramWebAppData = (req, res, next) => {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -9,10 +10,10 @@ const verifyTelegramWebAppData = (req, res, next) => {
 
     const initData = authHeader.split(' ')[1];
 
-    // Allow mock testing fallback gracefully
-    if (initData === 'mock_test_init_data_string') {
+    // Mock bypass — ONLY available outside production, never in a deployed environment.
+    if (process.env.NODE_ENV !== 'production' && initData === 'mock_test_init_data_string') {
         req.telegramUser = {
-            id: 999888777, 
+            id: 999888777,
             username: 'test_trader',
             first_name: 'Samuel',
             last_name: 'Ojiemen'
@@ -28,7 +29,7 @@ const verifyTelegramWebAppData = (req, res, next) => {
 
         const urlParams = new URLSearchParams(initData);
         const hash = urlParams.get('hash');
-        
+
         if (!hash) {
             return res.status(403).json({ error: 'Missing Telegram signature hash' });
         }
@@ -47,6 +48,13 @@ const verifyTelegramWebAppData = (req, res, next) => {
             return res.status(403).json({ error: 'Invalid Telegram signature' });
         }
 
+        // Reject stale initData (older than 24h) to prevent replay of a captured payload.
+        const authDate = parseInt(urlParams.get('auth_date'), 10);
+        const MAX_AGE_SECONDS = 24 * 60 * 60;
+        if (!authDate || Date.now() / 1000 - authDate > MAX_AGE_SECONDS) {
+            return res.status(403).json({ error: 'Telegram signature has expired, please reopen the app' });
+        }
+
         const rawUser = urlParams.get('user');
         if (!rawUser) {
             return res.status(400).json({ error: 'User data missing from initData' });
@@ -60,4 +68,22 @@ const verifyTelegramWebAppData = (req, res, next) => {
     }
 };
 
-module.exports = verifyTelegramWebAppData;
+// --- Verifies server-to-server calls (e.g. bot.js calling the backend directly) ---
+// Not a substitute for real auth — just proves the caller holds a shared secret
+// so this internal route isn't reachable by an arbitrary public client.
+export const verifyInternalService = (req, res, next) => {
+    const secret = req.headers['x-internal-secret'];
+
+    if (!process.env.INTERNAL_SERVICE_SECRET) {
+        console.error('INTERNAL_SERVICE_SECRET is not set — refusing internal request.');
+        return res.status(500).json({ error: 'Server misconfigured' });
+    }
+
+    if (secret !== process.env.INTERNAL_SERVICE_SECRET) {
+        return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    next();
+};
+
+export default verifyTelegramWebAppData;
