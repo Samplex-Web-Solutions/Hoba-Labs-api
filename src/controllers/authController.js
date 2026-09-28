@@ -1,9 +1,8 @@
 import { supabase } from '../config/supabase.js';
 import bcrypt from 'bcrypt';
+import { signToken } from '../utils/token.js';
 
 const generateClientId = async () => {
-  // Retry a few times on the rare chance of a collision, instead of letting
-  // the insert fail with an opaque unique-constraint error.
   for (let attempt = 0; attempt < 5; attempt++) {
     const randomNum = Math.floor(100000 + Math.random() * 900000);
     const candidate = `HOBA-${randomNum}`;
@@ -19,8 +18,6 @@ const generateClientId = async () => {
   throw new Error('Could not generate a unique client id, please retry.');
 };
 
-// Shared lookup used by both the internal (bot) and web-app (verified) login paths,
-// so the "what does a successful login response look like" logic lives in one place.
 const buildUserResponse = (user) => ({
   id: user.id,
   firstName: user.first_name,
@@ -79,15 +76,10 @@ export const registerUser = async (req, res) => {
     if (error) throw error;
 
     return res.status(201).json({
+      success: true,
       message: 'User registered successfully',
-      user: {
-        id: data.id,
-        firstName: data.first_name,
-        lastName: data.last_name,
-        phone: data.phone,
-        subscriptionPlan: data.subscription_plan,
-        onboarding_completed: data.onboarding_completed
-      }
+      user: buildUserResponse(data),
+      token: signToken(data.id)
     });
   } catch (err) {
     console.error('Registration error:', err);
@@ -120,8 +112,10 @@ export const loginUser = async (req, res) => {
     }
 
     return res.status(200).json({
+      success: true,
       message: 'Login successful',
-      user: buildUserResponse(user)
+      user: buildUserResponse(user),
+      token: signToken(user.id)
     });
   } catch (err) {
     console.error('Login error:', err);
@@ -164,7 +158,8 @@ export const syncTelegramUser = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Telegram user synced successfully',
-      user: existingUser
+      user: existingUser,
+      token: signToken(existingUser.id)
     });
   } catch (err) {
     console.error('Telegram sync error:', err);
@@ -172,10 +167,7 @@ export const syncTelegramUser = async (req, res) => {
   }
 };
 
-// --- 4a. TELEGRAM LOGIN — INTERNAL ONLY ---
-// Called by bot.js (server-to-server, protected by verifyInternalService).
-// telegram_id here comes from the bot's own Telegraf context, which Telegram
-// itself has already verified — never expose this route to public clients.
+// --- 4a. TELEGRAM LOGIN — INTERNAL ONLY (called by bot.js, not public clients) ---
 export const telegramLogin = async (req, res) => {
   try {
     const { telegram_id } = req.body;
@@ -209,10 +201,7 @@ export const telegramLogin = async (req, res) => {
   }
 };
 
-// --- 4b. TELEGRAM LOGIN — FROM THE MINI APP FRONTEND ---
-// Same result shape as telegramLogin, but the telegram_id is taken from
-// req.telegramUser (populated by verifyTelegramWebAppData), never from the
-// request body, so a client can't substitute someone else's id.
+// --- 4b. TELEGRAM LOGIN — FROM THE MINI APP FRONTEND (verified via initData) ---
 export const telegramWebAppLogin = async (req, res) => {
   try {
     const telegram_id = req.telegramUser?.id;
@@ -238,7 +227,8 @@ export const telegramWebAppLogin = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Telegram authentication successful',
-      user: buildUserResponse(user)
+      user: buildUserResponse(user),
+      token: signToken(user.id)
     });
   } catch (err) {
     console.error('Telegram web app login error:', err);
@@ -247,27 +237,55 @@ export const telegramWebAppLogin = async (req, res) => {
 };
 
 // --- 5. LINK TELEGRAM ACCOUNT ---
+// Two ways to reach this route:
+//  a) Already logged in (attachUserIfPresent found a valid JWT) — just needs telegram_id.
+//  b) Not logged in — must prove identity with phone + password, same as before.
 export const linkTelegramAccount = async (req, res) => {
   try {
-    const { phone, password, telegram_id, username } = req.body;
+    const { telegram_id, username, phone, password } = req.body;
 
-    if (!phone || !password || !telegram_id) {
-      return res.status(400).json({ success: false, error: 'Phone, password, and Telegram ID are required.' });
+    if (!telegram_id) {
+      return res.status(400).json({ success: false, error: 'Telegram ID is required.' });
     }
 
-    const { data: user, error: fetchError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('phone', phone)
-      .single();
+    let user;
 
-    if (fetchError || !user) {
-      return res.status(404).json({ success: false, error: 'No account found with this phone number. Please register on the web first.' });
-    }
+    if (req.userId) {
+      // Path (a): trust the verified session, not anything the client claims.
+      const { data, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', req.userId)
+        .single();
 
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
-    if (!isPasswordValid) {
-      return res.status(401).json({ success: false, error: 'Invalid password.' });
+      if (error || !data) {
+        return res.status(404).json({ success: false, error: 'Account not found for current session.' });
+      }
+      user = data;
+    } else {
+      // Path (b): no session — verify identity the old-fashioned way.
+      if (!phone || !password) {
+        return res.status(400).json({
+          success: false,
+          error: 'Phone and password are required to link Telegram without an active session.'
+        });
+      }
+
+      const { data, error: fetchError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('phone', phone)
+        .single();
+
+      if (fetchError || !data) {
+        return res.status(404).json({ success: false, error: 'No account found with this phone number. Please register on the web first.' });
+      }
+
+      const isPasswordValid = await bcrypt.compare(password, data.password_hash);
+      if (!isPasswordValid) {
+        return res.status(401).json({ success: false, error: 'Invalid password.' });
+      }
+      user = data;
     }
 
     const { data: updatedUser, error: updateError } = await supabase
@@ -285,7 +303,8 @@ export const linkTelegramAccount = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Telegram account successfully linked!',
-      user: buildUserResponse(updatedUser)
+      user: buildUserResponse(updatedUser),
+      token: signToken(updatedUser.id)
     });
   } catch (err) {
     console.error('Telegram link error:', err);
@@ -294,13 +313,10 @@ export const linkTelegramAccount = async (req, res) => {
 };
 
 // --- 6. ONBOARDING PREFERENCES ---
+// userId now comes from the verified JWT (req.userId), never the request body.
 export const saveOnboardingPreferences = async (req, res) => {
   try {
-    const { userId, experience_level, preferred_markets, execution_style } = req.body;
-
-    if (!userId) {
-      return res.status(400).json({ success: false, error: 'User ID is required.' });
-    }
+    const { experience_level, preferred_markets, execution_style } = req.body;
 
     const { data, error } = await supabase
       .from('users')
@@ -310,7 +326,7 @@ export const saveOnboardingPreferences = async (req, res) => {
         execution_style,
         onboarding_completed: true
       })
-      .eq('id', userId)
+      .eq('id', req.userId)
       .select()
       .single();
 
@@ -319,7 +335,7 @@ export const saveOnboardingPreferences = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Onboarding completed successfully',
-      user: data
+      user: buildUserResponse(data)
     });
   } catch (err) {
     console.error('Onboarding save error:', err);

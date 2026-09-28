@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { verifyToken } from '../utils/token.js';
 
 // --- Verifies Telegram Mini App initData (used for anything the FRONTEND calls directly) ---
 export const verifyTelegramWebAppData = (req, res, next) => {
@@ -48,7 +49,6 @@ export const verifyTelegramWebAppData = (req, res, next) => {
             return res.status(403).json({ error: 'Invalid Telegram signature' });
         }
 
-        // Reject stale initData (older than 24h) to prevent replay of a captured payload.
         const authDate = parseInt(urlParams.get('auth_date'), 10);
         const MAX_AGE_SECONDS = 24 * 60 * 60;
         if (!authDate || Date.now() / 1000 - authDate > MAX_AGE_SECONDS) {
@@ -69,8 +69,6 @@ export const verifyTelegramWebAppData = (req, res, next) => {
 };
 
 // --- Verifies server-to-server calls (e.g. bot.js calling the backend directly) ---
-// Not a substitute for real auth — just proves the caller holds a shared secret
-// so this internal route isn't reachable by an arbitrary public client.
 export const verifyInternalService = (req, res, next) => {
     const secret = req.headers['x-internal-secret'];
 
@@ -81,6 +79,44 @@ export const verifyInternalService = (req, res, next) => {
 
     if (secret !== process.env.INTERNAL_SERVICE_SECRET) {
         return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    next();
+};
+
+// --- Requires a logged-in web session (JWT from login/register) ---
+// On success, sets req.userId — always derive the user from THIS, never from
+// a userId the client puts in the request body, or anyone could pass a
+// different id and act as another user.
+export const verifyJWT = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'No authorization token provided' });
+    }
+
+    try {
+        req.userId = verifyToken(authHeader.split(' ')[1]);
+        next();
+    } catch (err) {
+        return res.status(401).json({ error: 'Invalid or expired session, please log in again.' });
+    }
+};
+
+// --- Same as verifyJWT, but doesn't fail if there's no token ---
+// Used for routes that behave differently depending on whether the caller
+// already has a session (e.g. linking Telegram: skip the password re-check
+// if they're already logged in, otherwise require phone+password).
+export const attachUserIfPresent = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+            req.userId = verifyToken(authHeader.split(' ')[1]);
+        } catch (err) {
+            // Invalid/expired token — treat as "not logged in" rather than erroring,
+            // since this route has a valid fallback path (phone + password).
+        }
     }
 
     next();
