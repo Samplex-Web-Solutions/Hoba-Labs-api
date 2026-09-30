@@ -13,10 +13,10 @@ import {
   verifyTelegramWebAppData,
   verifyInternalService,
   verifyJWT,
-  attachUserIfPresent
+  attachUserIfPresent,
 } from '../middleware/authMiddleware.js';
-// ^ Adjust this path if your middleware folder is actually named/located differently —
-// on a case-sensitive server (Linux), the folder name and case must match exactly.
+import { upgradeSubscription } from '../controllers/subscriptionController.js';
+import subscriptionRoutes from './subscriptionRoutes.js'; // Clean ES import
 
 const router = express.Router();
 
@@ -33,14 +33,17 @@ router.post('/register', authLimiter, registerUser);
 router.post('/login', authLimiter, loginUser);
 router.post('/onboarding', verifyJWT, saveOnboardingPreferences);
 
-// Telegram Mini App Routes (frontend, initData verified)
+// Telegram Mini App Routes
 router.post('/telegram-sync', verifyTelegramWebAppData, syncTelegramUser);
 router.post('/telegram-webapp-login', verifyTelegramWebAppData, telegramWebAppLogin);
-
-// Works whether or not the caller already has a session — see linkTelegramAccount
 router.post('/link-telegram', authLimiter, attachUserIfPresent, linkTelegramAccount);
-
-// Internal-only route — called by bot.js (server-to-server), never by public clients
 router.post('/telegram-login', verifyInternalService, telegramLogin);
+
+// Subscription custom routes
+// subscription custom routes
+router.post('/upgrade', verifyJWT, upgradeSubscription);
+
+// Mount subscription routes properly under /subscription prefix
+router.use('/subscription', subscriptionRoutes);
 
 export default router;

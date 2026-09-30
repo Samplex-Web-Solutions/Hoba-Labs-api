@@ -28,22 +28,41 @@ async function dispatchAndLogSignal(signal) {
 
     if (signalError) throw signalError;
 
-    // 2. Fetch users with active subscriptions and valid Telegram IDs
-    // You can query users directly or join with the subscriptions table depending on your business logic.
-    const { data: activeUsers, error: userError } = await supabase
-      .from('users')
-      .select('telegram_id')
-      .eq('subscription_status', 'active')
-      .not('telegram_id', 'is', null);
+    // 2. Fetch active subscriptions joined with users where telegram_id is not null
+    const nowIso = new Date().toISOString();
+    const { data: activeSubs, error: subError } = await supabase
+      .from('subscriptions')
+      .select(`
+        status,
+        trial_ends_at,
+        expires_at,
+        users!inner (
+          telegram_id
+        )
+      `)
+      .in('status', ['active', 'trialing'])
+      .not('users.telegram_id', 'is', null);
 
-    if (userError) throw userError;
+    if (subError) throw subError;
 
-    if (!activeUsers || activeUsers.length === 0) {
-      console.log(`[ICC_DISPATCH]: Signal logged, but no active Telegram subscribers found.`);
+    // Filter valid subscriptions by checking future trial or expiration dates
+    const validSubs = (activeSubs || []).filter(sub => {
+      const trialValid = sub.trial_ends_at && new Date(sub.trial_ends_at) > new Date(nowIso);
+      const expiresValid = sub.expires_at && new Date(sub.expires_at) > new Date(nowIso);
+      return trialValid || expiresValid;
+    });
+
+    if (validSubs.length === 0) {
+      console.log(`[ICC_DISPATCH]: Signal logged, but no active or trialing Telegram subscribers found.`);
       return true;
     }
 
-    const targetChatIds = activeUsers.map(user => user.telegram_id);
+    // Extract unique Telegram IDs
+    const targetChatIds = [...new Set(
+      validSubs
+        .map(sub => sub.users?.telegram_id)
+        .filter(Boolean)
+    )];
 
     // 3. Format Telegram Alert Message
     const emoji = signal.bias === 'BULLISH' ? '🟢 BUY (LONG)' : '🔴 SELL (SHORT)';

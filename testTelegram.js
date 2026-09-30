@@ -1,4 +1,4 @@
-import { dispatchAndLogSignal } from './services/iccNotificationService.js'; // Adjust path to your service file
+import { dispatchAndLogSignal } from './src/services/icc/iccNotificationService.js';
 
 async function runTest() {
   console.log('Sending test signal to Telegram and Supabase...');
