@@ -30,6 +30,7 @@ const buildUserResponse = (user) => ({
   id: user.id,
   firstName: user.first_name,
   lastName: user.last_name,
+  email: user.email,
   phone: user.phone,
   telegramId: user.telegram_id,
   subscriptionPlan: user.subscription_plan,
@@ -40,24 +41,25 @@ const buildUserResponse = (user) => ({
 // --- 1. WEB REGISTRATION ---
 export const registerUser = async (req, res) => {
   try {
-    const { firstName, lastName, phone, password, refCode } = req.body;
+    const { firstName, lastName, email, phone, password, refCode } = req.body;
 
-    if (!firstName || !lastName || !phone || !password) {
-      return res.status(400).json({ error: 'All fields are required.' });
+    if (!firstName || !lastName || !email || !phone || !password) {
+      return res.status(400).json({ error: 'All fields including email are required.' });
     }
 
     if (password.length < 8) {
       return res.status(400).json({ error: 'Password must be at least 8 characters.' });
     }
 
+    // Check if user already exists by phone or email
     const { data: existingUser } = await supabase
       .from('users')
       .select('id')
-      .eq('phone', phone)
+      .or(`phone.eq.${phone},email.eq.${email.toLowerCase()}`)
       .single();
 
     if (existingUser) {
-      return res.status(400).json({ error: 'User with this phone number already exists.' });
+      return res.status(400).json({ error: 'A user with this phone number or email already exists.' });
     }
 
     // Resolve referrer if refCode is provided
@@ -85,6 +87,7 @@ export const registerUser = async (req, res) => {
         {
           first_name: firstName,
           last_name: lastName,
+          email: email.toLowerCase().trim(),
           phone: phone,
           password_hash: passwordHash,
           client_id: client_id,
@@ -126,28 +129,33 @@ export const registerUser = async (req, res) => {
   }
 };
 
-// --- 2. WEB LOGIN (Phone + Password) ---
+// --- 2. WEB LOGIN (Email or Phone + Password) ---
 export const loginUser = async (req, res) => {
   try {
-    const { phone, password } = req.body;
+    const { loginIdentifier, password } = req.body; // Can be email or phone
 
-    if (!phone || !password) {
-      return res.status(400).json({ error: 'Phone number and password are required.' });
+    if (!loginIdentifier || !password) {
+      return res.status(400).json({ error: 'Email/Phone and password are required.' });
     }
 
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('phone', phone)
-      .single();
+    const isEmail = loginIdentifier.includes('@');
+    
+    const query = supabase.from('users').select('*');
+    if (isEmail) {
+      query.eq('email', loginIdentifier.toLowerCase().trim());
+    } else {
+      query.eq('phone', loginIdentifier.trim());
+    }
+
+    const { data: user, error } = await query.single();
 
     if (error || !user || !user.password_hash) {
-      return res.status(401).json({ error: 'Invalid phone number or password.' });
+      return res.status(401).json({ error: 'Invalid credentials or user not found.' });
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password_hash);
     if (!isPasswordValid) {
-      return res.status(401).json({ error: 'Invalid phone number or password.' });
+      return res.status(401).json({ error: 'Invalid credentials or user not found.' });
     }
 
     return res.status(200).json({
@@ -162,7 +170,7 @@ export const loginUser = async (req, res) => {
   }
 };
 
-// --- 3. TELEGRAM MINI APP SYNC (verified via initData middleware) ---
+// --- 3. TELEGRAM MINI APP SYNC ---
 export const syncTelegramUser = async (req, res) => {
   try {
     const { id: telegram_id, username, first_name, last_name } = req.telegramUser;
@@ -196,7 +204,6 @@ export const syncTelegramUser = async (req, res) => {
       if (insertError) throw insertError;
       existingUser = newUser;
 
-      // Create companion subscription record for Telegram user
       const trialEndsAt = calculateTrialEndDate(7);
       await supabase
         .from('subscriptions')
@@ -211,7 +218,7 @@ export const syncTelegramUser = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: 'Telegram user synced successfully',
-      user: existingUser,
+      user: buildUserResponse(existingUser),
       token: signToken(existingUser.id)
     });
   } catch (err) {
@@ -292,7 +299,7 @@ export const telegramWebAppLogin = async (req, res) => {
 // --- 5. LINK TELEGRAM ACCOUNT ---
 export const linkTelegramAccount = async (req, res) => {
   try {
-    const { telegram_id, username, phone, password } = req.body;
+    const { telegram_id, loginIdentifier, password } = req.body;
 
     if (!telegram_id) {
       return res.status(400).json({ success: false, error: 'Telegram ID is required.' });
@@ -312,21 +319,25 @@ export const linkTelegramAccount = async (req, res) => {
       }
       user = data;
     } else {
-      if (!phone || !password) {
+      if (!loginIdentifier || !password) {
         return res.status(400).json({
           success: false,
-          error: 'Phone and password are required to link Telegram without an active session.'
+          error: 'Email/Phone and password are required to link Telegram without an active session.'
         });
       }
 
-      const { data, error: fetchError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('phone', phone)
-        .single();
+      const isEmail = loginIdentifier.includes('@');
+      const query = supabase.from('users').select('*');
+      if (isEmail) {
+        query.eq('email', loginIdentifier.toLowerCase().trim());
+      } else {
+        query.eq('phone', loginIdentifier.trim());
+      }
+
+      const { data, error: fetchError } = await query.single();
 
       if (fetchError || !data) {
-        return res.status(404).json({ success: false, error: 'No account found with this phone number. Please register on the web first.' });
+        return res.status(404).json({ success: false, error: 'No account found with this credential. Please register on the web first.' });
       }
 
       const isPasswordValid = await bcrypt.compare(password, data.password_hash);

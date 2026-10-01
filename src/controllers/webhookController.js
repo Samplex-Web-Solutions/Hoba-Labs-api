@@ -6,7 +6,7 @@ export const handlePaystackWebhook = async (req, res) => {
   try {
     // 1. Verify Paystack signature for security
     const hash = crypto
-      .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+      .createHmac('sha512', process.env.VITE_PAYSTACK_SECRET_KEY)
       .update(JSON.stringify(req.body))
       .digest('hex');
 
@@ -20,9 +20,9 @@ export const handlePaystackWebhook = async (req, res) => {
     if (event.event === 'charge.success') {
       const transactionData = event.data;
       const reference = transactionData.reference; // Format: HOBA-{PLANKEY}-{TIMESTAMP}
-      const email = transactionData.customer.email;
+      const metadata = transactionData.metadata;
+      const customer = transactionData.customer;
 
-      // Extract plan key from reference (e.g., HOBA-MONTHLY-1718000000 -> monthly)
       const refParts = reference.split('-');
       if (refParts.length < 2) {
         console.error('[WEBHOOK_ERROR]: Invalid transaction reference format.');
@@ -42,19 +42,31 @@ export const handlePaystackWebhook = async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // 4. Find user by email in Supabase
-      const { data: user, error: userError } = await supabase
-        .from('users')
-        .select('id')
-        .eq('email', email)
-        .single();
+      // 4. Find user by metadata user_id, or fallback to email / phone matching
+      let userId = metadata?.user_id;
 
-      if (userError || !user) {
-        console.error(`[WEBHOOK_ERROR]: User not found for email: ${email}`);
-        return res.sendStatus(200);
+      if (!userId && customer?.email) {
+        const { data: userByEmail } = await supabase
+          .from('users')
+          .select('id')
+          .eq('email', customer.email.toLowerCase().trim())
+          .single();
+        if (userByEmail) userId = userByEmail.id;
       }
 
-      const userId = user.id;
+      if (!userId && customer?.phone) {
+        const { data: userByPhone } = await supabase
+          .from('users')
+          .select('id')
+          .eq('phone', customer.phone.trim())
+          .single();
+        if (userByPhone) userId = userByPhone.id;
+      }
+
+      if (!userId) {
+        console.error(`[WEBHOOK_ERROR]: Could not resolve user for transaction: ${reference}`);
+        return res.sendStatus(200);
+      }
 
       // 5. Calculate subscription expiry date dynamically using plan.days from database
       const expiresAt = new Date();
