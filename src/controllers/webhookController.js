@@ -73,12 +73,12 @@ export const handlePaystackWebhook = async (req, res) => {
       periodEnd.setDate(periodEnd.getDate() + plan.days);
 
       // 6. Update or insert into subscriptions table with active status & valid period columns
-      await supabase
+     await supabase
         .from('subscriptions')
         .upsert([{
           user_id: userId,
           status: 'active',
-          plan_type: planKey,
+          plan_type: planKey,          
           current_period_end: periodEnd.toISOString(),
           trial_ends_at: null,
           updated_at: new Date().toISOString()
