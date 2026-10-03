@@ -142,19 +142,23 @@ export async function verifySubscriptionPayment(req, res) {
       return res.status(400).json({ success: false, message: 'Plan not found' });
     }
 
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + plan.days);
+    // Calculate period end dynamically using plan.days matching webhook format
+    const periodEnd = new Date();
+    periodEnd.setDate(periodEnd.getDate() + plan.days);
 
+    // 1. Uniform subscription upsert matching webhook schema
     await supabase
       .from('subscriptions')
       .upsert([{
         user_id: userId,
         status: 'active',
-        plan_type: planKey,
-        expires_at: expiresAt.toISOString(),
-        trial_ends_at: null
+        plan_key: planKey,
+        current_period_end: periodEnd.toISOString(),
+        trial_ends_at: null,
+        updated_at: new Date().toISOString()
       }], { onConflict: 'user_id' });
 
+    // 2. Update user profile status & plan matching webhook schema
     await supabase
       .from('users')
       .update({
