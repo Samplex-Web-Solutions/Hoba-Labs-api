@@ -4,9 +4,9 @@ import crypto from 'crypto';
 
 export const handlePaystackWebhook = async (req, res) => {
   try {
-    // 1. Verify Paystack signature for security
+    // 1. Verify Paystack signature using the correct backend secret key
     const hash = crypto
-      .createHmac('sha512', process.env.VITE_PAYSTACK_SECRET_KEY)
+      .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
       .update(JSON.stringify(req.body))
       .digest('hex');
 
@@ -68,19 +68,20 @@ export const handlePaystackWebhook = async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // 5. Calculate subscription expiry date dynamically using plan.days from database
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + plan.days);
+      // 5. Calculate subscription period end date dynamically using plan.days from database
+      const periodEnd = new Date();
+      periodEnd.setDate(periodEnd.getDate() + plan.days);
 
-      // 6. Update or insert into subscriptions table
+      // 6. Update or insert into subscriptions table with active status & valid period columns
       await supabase
         .from('subscriptions')
         .upsert([{
           user_id: userId,
           status: 'active',
           plan_type: planKey,
-          expires_at: expiresAt.toISOString(),
-          trial_ends_at: null
+          current_period_end: periodEnd.toISOString(),
+          trial_ends_at: null,
+          updated_at: new Date().toISOString()
         }], { onConflict: 'user_id' });
 
       // 7. Update user profile status & plan
