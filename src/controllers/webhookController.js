@@ -75,7 +75,7 @@ export const handlePaystackWebhook = async (req, res) => {
       // 6. Update or insert into subscriptions table with active status & valid period columns
      await supabase
         .from('subscriptions')
-        .upsert([{
+        .update([{
           user_id: userId,
           status: 'active',
           plan_type: planKey,          
