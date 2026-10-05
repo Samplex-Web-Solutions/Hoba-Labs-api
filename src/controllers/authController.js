@@ -296,10 +296,10 @@ export const telegramWebAppLogin = async (req, res) => {
   }
 };
 
-// // --- 5. LINK TELEGRAM ACCOUNT ---
+// --- 5. LINK TELEGRAM ACCOUNT ---
 export const linkTelegramAccount = async (req, res) => {
   try {
-    const { telegram_id, loginIdentifier, password } = req.body;
+    const { telegram_id, username, loginIdentifier, password } = req.body; // <-- Added username here
 
     if (!telegram_id) {
       return res.status(400).json({ success: false, error: 'Telegram ID is required.' });
@@ -351,7 +351,7 @@ export const linkTelegramAccount = async (req, res) => {
       .from('users')
       .update({
         telegram_id: telegram_id,
-        username: username || user.username
+        username: username || user.username // <-- username is now properly defined
       })
       .eq('id', user.id)
       .select()
