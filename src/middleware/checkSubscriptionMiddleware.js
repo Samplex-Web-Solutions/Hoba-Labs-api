@@ -1,4 +1,4 @@
-import { supabase } from '../../config/supabase.js';
+import { supabase } from '../config/supabase.js';
 
 /**
  * Middleware to verify that the authenticated user has an active or trialing subscription.
