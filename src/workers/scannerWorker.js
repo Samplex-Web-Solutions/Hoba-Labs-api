@@ -5,7 +5,7 @@ import { evaluateIccSetup } from '../icc/engine/engine.js';
 import { dispatchAndLogSignal } from '../services/icc/iccNotificationService.js';
 
 // Expanded target pairs covering Forex and Crypto markets
-const TARGET_PAIRS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF', 'BTCUSD', 'ETHUSD'];
+const TARGET_PAIRS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF'];
 
 // Run automated scan every 5 minutes
 cron.schedule('*/5 * * * *', async () => {

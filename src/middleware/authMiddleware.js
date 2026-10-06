@@ -84,9 +84,7 @@ export const verifyInternalService = (req, res, next) => {
     next();
 };
 
-// --- Requires a logged-in web session (JWT from login/register) ---
-// On success, sets req.userId — always derive the user from THIS, never from
-// a userId the client puts in the request body, or anyone could pass a
+
 // different id and act as another user.
 export const verifyJWT = (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -103,9 +101,6 @@ export const verifyJWT = (req, res, next) => {
     }
 };
 
-// --- Same as verifyJWT, but doesn't fail if there's no token ---
-// Used for routes that behave differently depending on whether the caller
-// already has a session (e.g. linking Telegram: skip the password re-check
 // if they're already logged in, otherwise require phone+password).
 export const attachUserIfPresent = (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -122,4 +117,8 @@ export const attachUserIfPresent = (req, res, next) => {
     next();
 };
 
+
+
 export default verifyTelegramWebAppData;
+
+

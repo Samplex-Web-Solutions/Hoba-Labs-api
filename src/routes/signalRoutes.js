@@ -1,7 +1,7 @@
 import express from 'express';
 import { getSignals } from '../controllers/signalController.js';
 import { verifyJWT } from '../middleware/authMiddleware.js';
-import { checkSubscriptionMiddleware } from '../middleware/subscriptionMiddleware.js';
+import { checkSubscriptionMiddleware } from '../middleware/checkSubscriptionMiddleware.js';
 
 const router = express.Router();
 
