@@ -53,7 +53,7 @@ export async function processIccSignal(req, res) {
     });
 
   } catch (error) {
-    console.error(`[ICC_CONTROLLER_ERROR]: ${error.message}`, error.stack);
+    console.error(`${error.message}`, error.stack);
     
     return res.status(500).json({
       success: false,

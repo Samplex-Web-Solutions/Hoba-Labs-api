@@ -68,7 +68,10 @@ async function dispatchAndLogSignal(signal) {
     const accentLine = '━━━━━━━━━━━━━━━━━━━';
 
     const message = `
-🚀 <b>SIGNAL ALERT || HOBA LABS</b> 🚀
+    <b>NEW SIGNAL ALERT</B>
+    ${accentLine}
+    ${accentLine}
+🚀 <b>HOBA LABS</b> 🚀
 ${accentLine}
 <b>Asset / Pair:</b>  <code>${signal.pair}</code>
 <b>Direction:</b>     ${directionEmoji}
@@ -93,7 +96,7 @@ ${accentLine}
 
     await Promise.all(broadcastPromises);
 
-    console.log(`Signal broadcasted to ${targetChatIds.length} Telegram subscriber(s) for ${signal.pair}`);
+    console.log(`Signal sent to ${targetChatIds.length} subscriber(s) for ${signal.pair}`);
     return true;
 
   } catch (error) {
