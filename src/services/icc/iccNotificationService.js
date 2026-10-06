@@ -7,7 +7,7 @@ dotenv.config();
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
 /**
- * Persists generated signals to Supabase and broadcasts alerts only to users with active subscriptions.
+ * Persists generated signals to Supabase and broadcasts alerts only to users with active/trialing subscriptions and a valid telegram_id.
  * @param {Object} signal 
  */
 async function dispatchAndLogSignal(signal) {
@@ -28,61 +28,64 @@ async function dispatchAndLogSignal(signal) {
 
     if (signalError) throw signalError;
 
-    // 2. Fetch active subscriptions joined with users where telegram_id is not null
-    const nowIso = new Date().toISOString();
+    // 2. Query subscriptions table and join with users using foreign key relation (subscriptions.user_id = users.id)
     const { data: activeSubs, error: subError } = await supabase
       .from('subscriptions')
       .select(`
         status,
         trial_ends_at,
-        expires_at,
-        users!inner (
-          telegram_id
+        current_period_end,
+        users!subscriptions_user_id_fkey (
+          telegram_id,
+          username
         )
       `)
-      .in('status', ['active', 'trialing'])
-      .not('users.telegram_id', 'is', null);
+      .in('status', ['active', 'trialing']);
 
     if (subError) throw subError;
 
-    // Filter valid subscriptions by checking future trial or expiration dates
-    const validSubs = (activeSubs || []).filter(sub => {
-      const trialValid = sub.trial_ends_at && new Date(sub.trial_ends_at) > new Date(nowIso);
-      const expiresValid = sub.expires_at && new Date(sub.expires_at) > new Date(nowIso);
-      return trialValid || expiresValid;
-    });
-
-    if (validSubs.length === 0) {
-      console.log(`[ICC_DISPATCH]: Signal logged, but no active or trialing Telegram subscribers found.`);
+    if (!activeSubs || activeSubs.length === 0) {
+      console.log(`Signal logged, no active subscriptions found.`);
       return true;
     }
 
-    // Extract unique Telegram IDs
+    // 3. Extract unique, non-null Telegram IDs from the joined user records
     const targetChatIds = [...new Set(
-      validSubs
+      activeSubs
         .map(sub => sub.users?.telegram_id)
-        .filter(Boolean)
+        .filter(id => id !== null && id !== undefined)
     )];
 
-    // 3. Format Telegram Alert Message
-    const emoji = signal.bias === 'BULLISH' ? '🟢 BUY (LONG)' : '🔴 SELL (SHORT)';
+    if (targetChatIds.length === 0) {
+      console.log(`Subscriptions found, but none of the subscribers have linked their Telegram IDs yet.`);
+      return true;
+    }
+
+    // 4. Format Telegram Alert Message
+    // Format a gorgeous, high-impact Telegram Alert Message
+    const isBullish = signal.bias === 'BULLISH';
+    const directionEmoji = isBullish ? '🟢 <b>BUY SETUP</b>' : '🔴 <b>SELL SETUP</b>';
+    const accentLine = '━━━━━━━━━━━━━━━━━━━';
+
     const message = `
-🚨 *ICC STRATEGY SIGNAL GENERATED* 🚨
-
-*Asset:* ${signal.pair}
-*Direction:* ${emoji}
-*Entry Price:* ${signal.entryPrice}
-*Stop Loss:* ${signal.stopLoss}
-*Take Profit:* ${signal.takeProfit}
-*Zone ID:* ${signal.aoiId}
-
-_Engine Status: Broadcasted to Premium Members_
+🚀 <b>SIGNAL ALERT || HOBA LABS</b> 🚀
+${accentLine}
+<b>Asset / Pair:</b>  <code>${signal.pair}</code>
+<b>Direction:</b>     ${directionEmoji}
+<b>Setup Type:</b>    <code>ICC</code>
+${accentLine}
+🎯 <b>ENTRY DETAILS</b>
+• <b>Entry Price:</b>  <code>${signal.entryPrice}</code>
+• <b>Stop Loss:</b>    <code>${signal.stopLoss}</code>
+• <b>Take Profit:</b>  <code>${signal.takeProfit}</code>
+${accentLine}
+ <i>Status: Verified Member</i>
     `.trim();
 
-    // 4. Broadcast to each subscribed user concurrently
+    // 5. Broadcast to each subscribed user concurrently
     const broadcastPromises = targetChatIds.map(async (telegramId) => {
       try {
-        await bot.telegram.sendMessage(telegramId, message, { parse_mode: 'Markdown' });
+        await bot.telegram.sendMessage(telegramId, message, { parse_mode: 'HTML' });
       } catch (err) {
         console.error(`[TELEGRAM_SEND_ERROR]: Failed to send to ${telegramId}:`, err.message);
       }
@@ -90,11 +93,11 @@ _Engine Status: Broadcasted to Premium Members_
 
     await Promise.all(broadcastPromises);
 
-    console.log(`[ICC_DISPATCH_SUCCESS]: Signal broadcasted to ${targetChatIds.length} active subscriber(s) for ${signal.pair}`);
+    console.log(`Signal broadcasted to ${targetChatIds.length} Telegram subscriber(s) for ${signal.pair}`);
     return true;
 
   } catch (error) {
-    console.error(`[ICC_DISPATCH_ERROR]: Failed to log or broadcast signal`, error.message);
+    console.error(`Failed to log or broadcast signal`, error.message);
     return false;
   }
 }
