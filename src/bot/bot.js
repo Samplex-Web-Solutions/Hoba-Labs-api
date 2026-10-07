@@ -131,7 +131,7 @@ const handleViewSignals = async (ctx) => {
 
         const status = (user?.subscription_status || '').toLowerCase();
         if (!['active', 'trialing'].includes(status)) {
-            return ctx.reply('🔒 Access Denied. Your subscription is not active. Upgrade your plan to view live signals.');
+            return ctx.reply('🔒 Access Denied. Your subscription is not active.');
         }
 
         const { data: signals, error } = await supabase
