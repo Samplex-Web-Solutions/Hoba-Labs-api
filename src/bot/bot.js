@@ -3,7 +3,7 @@ import { Telegraf, Markup } from 'telegraf';
 import axios from 'axios';
 import { supabase } from '../config/supabase.js';
 import { monitorOpenTrades } from '../services/monitor/tradeMonitorService.js';
-import { fetchMarketNews } from '../services/news/newsService.js';
+import { fetchEconomicCalendar } from '../services/news/newsService.js';
 
 dotenv.config();
 
