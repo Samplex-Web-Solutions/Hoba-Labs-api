@@ -11,6 +11,10 @@ import signalRoutes from './src/routes/signalRoutes.js';
 // Import your autonomous background scanner worker here
 import './src/workers/scannerWorker.js';
 
+import { fetchMarketNews } from './src/services/news/newsService.js';
+
+
+
 dotenv.config();
 
 const app = express();
@@ -24,6 +28,14 @@ app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/v1/icc', iccRoutes);
 app.use('/api/signals', signalRoutes);
+app.get('/api/news/market', async (req, res) => {
+  try {
+    const news = await fetchMarketNews(6);
+    res.json({ success: true, data: news });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Failed to fetch news' });
+  }
+});
 
 app.get('/', (req, res) => {
     res.status(200).json({ status: 'online', service: 'Hoba Labs Backend API' });

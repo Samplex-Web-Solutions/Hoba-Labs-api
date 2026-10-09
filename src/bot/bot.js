@@ -3,6 +3,7 @@ import { Telegraf, Markup } from 'telegraf';
 import axios from 'axios';
 import { supabase } from '../config/supabase.js';
 import { monitorOpenTrades } from '../services/monitor/tradeMonitorService.js';
+import { fetchMarketNews } from '../services/news/newsService.js';
 
 dotenv.config();
 
@@ -41,6 +42,7 @@ bot.start(async (ctx) => {
         Markup.inlineKeyboard([
           [Markup.button.webApp('📊 Open Dashboard', `${FRONTEND_URL}/dashboard`)],
           [Markup.button.callback('📈 Latest Signals', 'view_signals')],
+          [Markup.button.callback('📰 Market News', 'view_news')],
           [Markup.button.callback('👤 Check Subscription', 'check_subscription')]
         ])
       );
@@ -53,6 +55,44 @@ bot.start(async (ctx) => {
       ])
     );
   }
+});
+
+
+
+// --- /news Command Handler ---
+const handleMarketNews = async (ctx) => {
+    try {
+        await ctx.reply('📰 Fetching latest market news from Biquote...');
+        const articles = await fetchMarketNews(4);
+
+        if (!articles || articles.length === 0) {
+            return ctx.reply('📭 No market news available at the moment.');
+        }
+
+        for (const article of articles) {
+            // Adjust property names based on Biquote's actual JSON response keys (e.g., title, url, summary, time)
+            const title = article.title || 'Market Update';
+            const source = article.source || 'Biquote Market Feed';
+            const url = article.url || 'https://biquote.io';
+            const time = article.time ? new Date(article.time).toLocaleString() : 'Recent';
+
+            const msg = `📰 *${title}*\n\n` +
+                `🏢 *Source:* ${source}\n` +
+                `⏱️ *Time:* ${time}\n\n` +
+                `🔗 [Read Full Article](${url})`;
+
+            await ctx.replyWithMarkdown(msg, { disable_web_page_preview: true });
+        }
+    } catch (err) {
+        console.error('[TELEGRAM_NEWS_ERROR]:', err);
+        await ctx.reply('⚠️ Error fetching market news. Please try again later.');
+    }
+};
+
+bot.command('news', handleMarketNews);
+bot.action('view_news', async (ctx) => {
+    await ctx.answerCbQuery();
+    await handleMarketNews(ctx);
 });
 
 // --- Subscription Handler ---
