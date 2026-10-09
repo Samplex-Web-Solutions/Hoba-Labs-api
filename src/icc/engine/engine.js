@@ -40,15 +40,15 @@ export function evaluateIccSetup(pair, currentBars, activeAois) {
   }
 
   const stopLoss = bias === 'BULLISH' 
-    ? Number((targetedAoi.low - buffer).toFixed(4)) 
-    : Number((targetedAoi.high + buffer).toFixed(4));
+    ? Number((targetedAoi.low - buffer).toFixed(5)) 
+    : Number((targetedAoi.high + buffer).toFixed(5));
 
   const risk = Math.abs(entryPrice - stopLoss);
   
   const rewardMultiplier = 2.5;
   const takeProfit = bias === 'BULLISH' 
-    ? Number((entryPrice + (risk * rewardMultiplier)).toFixed(4)) 
-    : Number((entryPrice - (risk * rewardMultiplier)).toFixed(4));
+    ? Number((entryPrice + (risk * rewardMultiplier)).toFixed(5)) 
+    : Number((entryPrice - (risk * rewardMultiplier)).toFixed(5));
 
   const slPips = calculatePips(entryPrice, stopLoss, pair);
   const tpPips = calculatePips(entryPrice, takeProfit, pair);
@@ -61,7 +61,7 @@ export function evaluateIccSetup(pair, currentBars, activeAois) {
     slPips,
     tpPips,
     aoiId: targetedAoi.id,
-    entryPrice: Number(entryPrice.toFixed(4)),
+    entryPrice: Number(entryPrice.toFixed(5)),
     stopLoss,
     takeProfit,
     timestamp: Date.now()
