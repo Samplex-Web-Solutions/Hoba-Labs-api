@@ -189,7 +189,7 @@ bot.launch().then(() => {
   // Start Trade Lifecycle Monitor Worker every 30 seconds
   setInterval(() => {
     monitorOpenTrades();
-  }, 30000);
+  }, 60000);
   console.log('📈 Trade Monitor Worker initialized with Biquote feed...');
 }).catch((err) => {
   console.error('Telegram bot startup error:', err);
