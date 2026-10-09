@@ -1,15 +1,25 @@
 import axios from 'axios';
 
 /**
- * Fetch high-impact economic calendar events from Biquote
+ * Fetch economic calendar events for today only
  */
-export async function fetchEconomicCalendar(importance = 'high', limit = 20) {
+export async function fetchTodayCalendar(importance = '') {
   try {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+
+    const endOfDay = new Date();
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    const params = {
+      from: startOfDay.toISOString(),
+      to: endOfDay.toISOString(),
+    };
+
+    if (importance) params.importance = importance;
+
     const response = await axios.get('https://biquote.io/api/calendar', {
-      params: { 
-        importance: importance, // 'high', 'medium', 'low'
-        limit: limit 
-      },
+      params,
       headers: { 'Accept': 'application/json' }
     });
 

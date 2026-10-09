@@ -3,7 +3,7 @@ import { Telegraf, Markup } from 'telegraf';
 import axios from 'axios';
 import { supabase } from '../config/supabase.js';
 import { monitorOpenTrades } from '../services/monitor/tradeMonitorService.js';
-import { fetchEconomicCalendar } from '../services/news/newsService.js';
+import { fetchTodayCalendar } from '../services/news/newsService.js';
 
 dotenv.config();
 
@@ -42,7 +42,7 @@ bot.start(async (ctx) => {
         Markup.inlineKeyboard([
           [Markup.button.webApp('📊 Open Dashboard', `${FRONTEND_URL}/dashboard`)],
           [Markup.button.callback('📈 Latest Signals', 'view_signals')],
-          [Markup.button.callback('📰 Market News', 'view_news')],
+          [Markup.button.callback('📅 Economic Calendar', 'view_calendar')],
           [Markup.button.callback('👤 Check Subscription', 'check_subscription')]
         ])
       );
@@ -59,40 +59,48 @@ bot.start(async (ctx) => {
 
 
 
-// --- /news Command Handler ---
-const handleMarketNews = async (ctx) => {
+// --- /calendar Command Handler ---
+const handleEconomicCalendar = async (ctx) => {
     try {
-        await ctx.reply('📰 Fetching latest market news from Biquote...');
-        const articles = await fetchMarketNews(4);
+        await ctx.reply('📅 Fetching today\'s economic calendar releases...');
+        const events = await fetchTodayCalendar(); // Uses your today calendar service
 
-        if (!articles || articles.length === 0) {
-            return ctx.reply('📭 No market news available at the moment.');
+        if (!events || events.length === 0) {
+            return ctx.reply('📭 No economic events scheduled for today.');
         }
 
-        for (const article of articles) {
-            // Adjust property names based on Biquote's actual JSON response keys (e.g., title, url, summary, time)
-            const title = article.title || 'Market Update';
-            const source = article.source || 'Biquote Market Feed';
-            const url = article.url || 'https://biquote.io';
-            const time = article.time ? new Date(article.time).toLocaleString() : 'Recent';
+        // Limit to top 5-6 events so it doesn't spam the chat
+        const topEvents = events.slice(0, 6);
 
-            const msg = `📰 *${title}*\n\n` +
-                `🏢 *Source:* ${source}\n` +
-                `⏱️ *Time:* ${time}\n\n` +
-                `🔗 [Read Full Article](${url})`;
+        for (const ev of topEvents) {
+            const country = ev.countryCode || 'GL';
+            const currency = ev.currency || '';
+            const name = ev.name || 'Economic Release';
+            const importance = (ev.importance || 'low').toUpperCase();
+            const time = ev.time ? new Date(ev.time).toLocaleTimeString([], { timeStyle: 'short' }) : 'Scheduled';
+            
+            const forecast = ev.forecast !== null && ev.forecast !== undefined ? ev.forecast : 'N/A';
+            const previous = ev.previous !== null && ev.previous !== undefined ? ev.previous : 'N/A';
+            const actual = ev.actual !== null && ev.actual !== undefined ? ev.actual : 'Pending';
 
-            await ctx.replyWithMarkdown(msg, { disable_web_page_preview: true });
+            const msg = `📅 *${country} (${currency}) — ${name}*\n\n` +
+                `⭐ *Importance:* ${importance}\n` +
+                `⏱️ *Time:* ${time}\n` +
+                `📊 *Forecast:* ${forecast} | *Prev:* ${previous}\n` +
+                `🎯 *Actual:* ${actual}`;
+
+            await ctx.replyWithMarkdown(msg);
         }
     } catch (err) {
-        console.error('[TELEGRAM_NEWS_ERROR]:', err);
-        await ctx.reply('⚠️ Error fetching market news. Please try again later.');
+        console.error('[TELEGRAM_CALENDAR_ERROR]:', err);
+        await ctx.reply('⚠️ Error fetching economic calendar. Please try again later.');
     }
 };
 
-bot.command('news', handleMarketNews);
-bot.action('view_news', async (ctx) => {
+bot.command('calendar', handleEconomicCalendar);
+bot.action('view_calendar', async (ctx) => {
     await ctx.answerCbQuery();
-    await handleMarketNews(ctx);
+    await handleEconomicCalendar(ctx);
 });
 
 // --- Subscription Handler ---

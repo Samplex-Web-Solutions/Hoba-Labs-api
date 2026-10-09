@@ -10,7 +10,7 @@ import signalRoutes from './src/routes/signalRoutes.js';
 
 // Import your autonomous background scanner worker here
 import './src/workers/scannerWorker.js';
-import { fetchEconomicCalendar } from './src/services/news/newsService.js';
+import { fetchTodayCalendar } from './src/services/news/newsService.js';
 
 
 
@@ -27,12 +27,12 @@ app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/v1/icc', iccRoutes);
 app.use('/api/signals', signalRoutes);
-app.get('/api/calendar/upcoming', async (req, res) => {
+app.get('/api/calendar/today', async (req, res) => {
   try {
-    const events = await fetchEconomicCalendar('high', 15);
+    const events = await fetchTodayCalendar();
     res.json({ success: true, data: events });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to fetch calendar events' });
+    res.status(500).json({ success: false, message: 'Failed to fetch today\'s calendar' });
   }
 });
 
