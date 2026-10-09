@@ -303,7 +303,7 @@ bot.on('text', async (ctx, next) => {
     if (session.step === 'WAITING_ACCOUNT_SIZE') {
         const accountSize = parseFloat(textInput);
         if (isNaN(accountSize) || accountSize <= 0) {
-            return ctx.reply('⚠️ Please enter a valid numerical account size (e.g., 5000):');
+            return ctx.reply('⚠️ Please enter Account size (e.g., 5000):');
         }
 
         session.accountSize = accountSize;
@@ -312,7 +312,7 @@ bot.on('text', async (ctx, next) => {
 
         return ctx.reply(
             `💰 *Account Size Saved:* \`$${accountSize}\`\n\n` +
-            `2️⃣ Please type your preferred **Lot Size** (e.g. \`0.1\` or \`1.0\`):`,
+            `2️⃣ Please type your preferred **Lot Size** (e.g.\`0.01\` or \`0.1\` or \`1.0\`):`,
             { parse_mode: 'Markdown' }
         );
     }
@@ -320,7 +320,7 @@ bot.on('text', async (ctx, next) => {
     if (session.step === 'WAITING_LOT_SIZE') {
         const lotSize = parseFloat(textInput);
         if (isNaN(lotSize) || lotSize <= 0) {
-            return ctx.reply('⚠️ Please enter a valid numerical lot size (e.g., 0.1):');
+            return ctx.reply('⚠️ Please enter lot size (e.g., 0.1):');
         }
 
         const { signal, accountSize } = session;
