@@ -71,11 +71,10 @@ async function dispatchAndLogSignal(signal) {
     const message = `
 <b>NEW SIGNAL ALERT</b>
 ${accentLine}
-🚀 <b>HOBA LABS</b> 🚀
+📈 <b>HOBA LABS</b> 
 ${accentLine}
 <b>Asset / Pair:</b>  <code>${signal.pair}</code>
 <b>Direction:</b>     ${directionEmoji}
-<b>Setup Type:</b>    <code>ICC (Smart Money)</code>
 <b>Risk:Reward:</b>   <code>${signal.riskRewardRatio}</code>
 ${accentLine}
 🎯 <b>EXECUTION TARGETS</b>
@@ -84,7 +83,7 @@ ${accentLine}
 • <b>Take Profit:</b>  <code>${signal.takeProfit}</code> (${signal.tpPips} pips)
 • <b>Risk Reward:</b>  <code>${signal.riskRewardRatio}</code>
 ${accentLine}
-<i>Status: Verified Member</i>
+<i>Status: ✅ Verified Member</i>
     `.trim();
 
     // 4. Broadcast concurrently

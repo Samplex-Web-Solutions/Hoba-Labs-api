@@ -1,0 +1,256 @@
+import { supabase } from '../../config/supabase.js';
+import axios from 'axios';
+
+const BACKEND_URL = process.env.BACKEND_URL;
+const INTERNAL_SERVICE_SECRET = process.env.INTERNAL_SERVICE_SECRET;
+
+/**
+ * Fetch current market price from public Biquote API
+ */
+async function getCurrentMarketPrice(pair) {
+  try {
+    // Format pair for Biquote if needed (e.g., EURUSD)
+    const cleanPair = pair.toUpperCase().replace('/', '');
+    
+    // Using Biquote's public tick endpoint: GET /api/{symbol}
+    const response = await axios.get(`https://biquote.io/api/${cleanPair}`);
+
+    // Adjust based on Biquote's exact tick schema (e.g. price, last, close, or bid/ask average)
+    const tickData = response.data;
+    const price = tickData?.price || tickData?.last || tickData?.close || tickData?.bid;
+    
+    return price ? parseFloat(price) : null;
+  } catch (err) {
+    console.error(`[BIQUOTE_PRICE_ERROR] Could not fetch price for ${pair}:`, err.message);
+    return null;
+  }
+}
+
+/**
+ * Broadcast message to active users via backend / telegram dispatcher
+ */
+async function sendTelegramBroadcast(message) {
+  try {
+    const { data: activeSubs } = await supabase
+      .from('subscriptions')
+      .select(`users!subscriptions_user_id_fkey ( telegram_id )`)
+      .in('status', ['active', 'trialing']);
+
+    if (!activeSubs || activeSubs.length === 0) return;
+
+    const chatIds = [...new Set(
+      activeSubs.map(sub => sub.users?.telegram_id).filter(id => id)
+    )];
+
+    for (const chatId of chatIds) {
+      await axios.post(
+        `${BACKEND_URL}/api/telegram/broadcast`,
+        { chat_id: chatId, message },
+        { headers: { 'x-internal-secret': INTERNAL_SERVICE_SECRET } }
+      ).catch(() => {});
+    }
+  } catch (err) {
+    console.error('[BROADCAST_ERROR]:', err.message);
+  }
+}
+
+/**
+ * Main worker loop function checking open trades against Biquote live prices every 30 seconds
+ */
+export async function monitorOpenTrades() {
+  try {
+    const { data: signals, error } = await supabase
+      .from('signals')
+      .select('*')
+      .in('status', ['PENDING', 'TRIGGERED']);
+
+    if (error || !signals || signals.length === 0) return;
+
+    for (const signal of signals) {
+      const currentPrice = await getCurrentMarketPrice(signal.pair);
+      if (!currentPrice) continue;
+
+      const cleanPair = signal.pair.toUpperCase();
+      const isGold = cleanPair.includes('XAU');
+      const isJpy = cleanPair.includes('JPY');
+      const pipMultiplier = isGold ? 10 : isJpy ? 100 : 10000;
+
+      const isBullish = signal.direction === 'BULLISH' || signal.direction === 'BUY';
+      const riskPips = Math.abs(signal.entry_price - signal.stop_loss) * pipMultiplier;
+
+      // ----------------------------------------------------
+      // 1. PENDING -> TRIGGERED OR MISSED CHECK
+      // ----------------------------------------------------
+      if (signal.status === 'PENDING') {
+        const touchedEntry = isBullish 
+          ? currentPrice <= signal.entry_price 
+          : currentPrice >= signal.entry_price;
+
+        if (touchedEntry) {
+          await supabase.from('signals').update({ status: 'TRIGGERED' }).eq('id', signal.id);
+
+          const msg = `
+⚡ <b>TRADE TRIGGERED</b>
+━━━━━━━━━━━━━━━━━━━
+🚀 <b>HOBA LABS</b> 🚀
+━━━━━━━━━━━━━━━━━━━
+<b>Pair:</b>        <code>${signal.pair}</code>
+<b>Direction:</b>   ${isBullish ? '🟢 BUY' : '🔴 SELL'}
+<b>Entry Price:</b> <code>${signal.entry_price}</code>
+━━━━━━━━━━━━━━━━━━━
+<i>Price has entered the zone. Execution active!</i>
+          `.trim();
+
+          await sendTelegramBroadcast(msg);
+          continue;
+        }
+
+        // Check if setup was MISSED / EXPIRED (e.g., 4 hours elapsed or price ran away)
+        const createdAt = new Date(signal.created_at).getTime();
+        const now = Date.now();
+        const hoursElapsed = (now - createdAt) / (1000 * 60 * 60);
+        const maxWaitHours = 4; 
+        
+        const invalidationBreached = isBullish 
+          ? currentPrice > signal.entry_price + (riskPips * 2 / pipMultiplier) 
+          : currentPrice < signal.entry_price - (riskPips * 2 / pipMultiplier);
+
+        if (hoursElapsed >= maxWaitHours || invalidationBreached) {
+          await supabase.from('signals').update({ status: 'MISSED', outcome: 'EXPIRED' }).eq('id', signal.id);
+
+          const msg = `
+⌛ <b>SETUP EXPIRED</b>
+━━━━━━━━━━━━━━━━━━━
+📈 <b>HOBA LABS</b> 
+━━━━━━━━━━━━━━━━━━━
+<b>Pair:</b>        <code>${signal.pair}</code>
+<b>Direction:</b>   ${isBullish ? '🟢 BUY' : '🔴 SELL'}
+<b>Entry Zone:</b>  <code>${signal.entry_price}</code>
+━━━━━━━━━━━━━━━━━━━
+<i>Setup cancelled cleanly. Moving to the next opportunity! 📉</i>
+          `.trim();
+
+          await sendTelegramBroadcast(msg);
+          continue;
+        }
+      }
+
+      // ----------------------------------------------------
+      // 2. TRIGGERED TRADE MANAGEMENT (BE, TP, SL)
+      // ----------------------------------------------------
+      if (signal.status === 'TRIGGERED') {
+        const currentProfitPips = isBullish
+          ? (currentPrice - signal.entry_price) * pipMultiplier
+          : (signal.entry_price - currentPrice) * pipMultiplier;
+
+        const maxProfit = Math.max(signal.max_profit_pips || 0, currentProfitPips);
+
+        // --- TAKE PROFIT (TP) HIT ---
+        const hitTp = isBullish ? currentPrice >= signal.take_profit : currentPrice <= signal.take_profit;
+        if (hitTp) {
+          await supabase.from('signals').update({ 
+            status: 'COMPLETED', 
+            outcome: 'TP', 
+            exit_price: signal.take_profit,
+            pips_gained: signal.tp_pips 
+          }).eq('id', signal.id);
+
+          const msg = `
+🎯 <b>TAKE PROFIT HIT! (TP)</b>
+━━━━━━━━━━━━━━━━━━━
+📈 <b>HOBA LABS</b> 
+━━━━━━━━━━━━━━━━━━━
+<b>Pair:</b>        <code>${signal.pair}</code>
+<b>Direction:</b>   ${isBullish ? '🟢 BUY' : '🔴 SELL'}
+<b>Profit:</b>      <code>+${signal.tp_pips} Pips 💰</code>
+━━━━━━━━━━━━━━━━━━━
+<i>Target successfully crushed. Secure profits and chill! 🔥</i>
+          `.trim();
+
+          await sendTelegramBroadcast(msg);
+          continue;
+        }
+
+        // --- STOP LOSS (SL) HIT ---
+        const hitSl = isBullish ? currentPrice <= signal.stop_loss : currentPrice >= signal.stop_loss;
+        if (hitSl) {
+          await supabase.from('signals').update({ 
+            status: 'COMPLETED', 
+            outcome: 'SL', 
+            exit_price: signal.stop_loss,
+            pips_gained: -signal.sl_pips 
+          }).eq('id', signal.id);
+
+          const msg = `
+💔 <b>STOP LOSS HIT</b>
+━━━━━━━━━━━━━━━━━━━
+📈 <b>HOBA LABS</b> 
+━━━━━━━━━━━━━━━━━━━
+<b>Pair:</b>        <code>${signal.pair}</code>
+<b>Loss:</b>        <code>-${signal.sl_pips} Pips</code>
+━━━━━━━━━━━━━━━━━━━
+<i>Strict risk management kept losses controlled. Onto the next setup!</i>
+          `.trim();
+
+          await sendTelegramBroadcast(msg);
+          continue;
+        }
+
+        // --- ADVISOR: SET BE (1:1 MILESTONE) ---
+        if (currentProfitPips >= riskPips && !signal.notified_one_to_one) {
+          await supabase.from('signals').update({ 
+            notified_one_to_one: true, 
+            max_profit_pips: maxProfit 
+          }).eq('id', signal.id);
+
+          const msg = `
+💡 <b>ADVISOR: SET BREAK-EVEN</b>
+━━━━━━━━━━━━━━━━━━━
+📈 <b>HOBA LABS</b> 
+━━━━━━━━━━━━━━━━━━━
+<b>Pair:</b>        <code>${signal.pair}</code>
+<b>Milestone:</b>   <span>1:1 Risk Reward reached (~${Math.round(riskPips)} pips)</span>
+━━━━━━━━━━━━━━━━━━━
+🛡️ <b>Action Required:</b> Secure partial profits </code>. Protect your capital!
+          `.trim();
+
+          await sendTelegramBroadcast(msg);
+          continue;
+        }
+
+        // --- BE TRIGGERED (WENT PAST 1:1 AND RETRACED TO ENTRY) ---
+        const wentPastOneToOne = maxProfit >= riskPips + 10; 
+        const touchedEntryOnRetrace = Math.abs(currentPrice - signal.entry_price) <= (isGold ? 0.3 : 0.0008);
+
+        if (wentPastOneToOne && touchedEntryOnRetrace) {
+          await supabase.from('signals').update({ 
+            status: 'COMPLETED', 
+            outcome: 'BE', 
+            exit_price: signal.entry_price,
+            pips_gained: 0 
+          }).eq('id', signal.id);
+
+          const msg = `
+🛡️ <b>BREAK-EVEN TRIGGERED</b>
+━━━━━━━━━━━━━━━━━━━
+📈 <b>HOBA LABS</b> 
+━━━━━━━━━━━━━━━━━━━
+<b>Pair:</b>        <code>${signal.pair}</code>
+<b>Outcome:</b>     <span>Closed at Entry (Break-Even)</span>
+━━━━━━━━━━━━━━━━━━━
+<i>Profit Locked, Zero risk taken! 🔒</i>
+          `.trim();
+
+          await sendTelegramBroadcast(msg);
+          continue;
+        }
+
+        if (maxProfit > (signal.max_profit_pips || 0)) {
+          await supabase.from('signals').update({ max_profit_pips: maxProfit }).eq('id', signal.id);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[TRADE_MONITOR_WORKER_ERROR]:', err.message);
+  }
+}
