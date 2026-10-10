@@ -16,19 +16,36 @@ function calculatePips(entry, target, pair) {
   return parseFloat(pips.toFixed(1));
 }
 
-export function evaluateIccSetup(pair, currentBars, activeAois) {
-  const latestBar = currentBars[currentBars.length - 1];
-  
-  const bias = detectTrendBias(currentBars);
-  if (bias === 'NEUTRAL') return null;
+/**
+ * Evaluates ICC Setup with strict Top-Down Multi-Timeframe Confluence (1D ➔ 4H ➔ 1H ➔ 5m)
+ */
+export function evaluateIccSetup(pair, dailyBars, h4Bars, h1Bars, m5Bars, activeAois) {
+  // 1. MACRO INDICATION: Check Daily (1D) Market Structure Bias
+  const dailyBias = detectTrendBias(dailyBars);
+  if (dailyBias === 'NEUTRAL') return null;
 
-  const targetedAoi = checkAoiTap(latestBar.close, activeAois);
+  // 2. INTERMEDIATE INDICATION: Check 4-Hour (4H) Market Structure Bias
+  const h4Bias = detectTrendBias(h4Bars);
+  if (h4Bias === 'NEUTRAL' || h4Bias !== dailyBias) {
+    // Reject setup if 4H structure conflicts with Daily macro trend
+    return null;
+  }
+
+  // 3. MICRO INDICATION: Check 1-Hour (1H) Bias Alignment
+  const h1Bias = detectTrendBias(h1Bars);
+  if (h1Bias !== dailyBias) return null;
+
+  // 4. CORRECTION PHASE: Check if 1H price is tapping an Order Block / AOI zone
+  const latestH1Bar = h1Bars[h1Bars.length - 1];
+  const targetedAoi = checkAoiTap(latestH1Bar.close, activeAois);
   if (!targetedAoi) return null;
 
-  const isConfirmed = validateConfirmation(currentBars, bias);
+  // 5. CONTINUATION PHASE: Validate Lower Timeframe (5m) structure confirmation
+  const isConfirmed = validateConfirmation(m5Bars, dailyBias);
   if (!isConfirmed) return null;
 
-  const entryPrice = latestBar.close;
+  const latestM5Bar = m5Bars[m5Bars.length - 1];
+  const entryPrice = latestM5Bar.close;
   
   let buffer = 0.0010; 
   const cleanPair = pair.toUpperCase();
@@ -39,23 +56,26 @@ export function evaluateIccSetup(pair, currentBars, activeAois) {
     buffer = 0.15; 
   }
 
-  const stopLoss = bias === 'BULLISH' 
+  const stopLoss = dailyBias === 'BULLISH' || dailyBias === 'BUY'
     ? Number((targetedAoi.low - buffer).toFixed(5)) 
     : Number((targetedAoi.high + buffer).toFixed(5));
 
   const risk = Math.abs(entryPrice - stopLoss);
   
   const rewardMultiplier = 2.5;
-  const takeProfit = bias === 'BULLISH' 
+  const takeProfit = dailyBias === 'BULLISH' || dailyBias === 'BUY'
     ? Number((entryPrice + (risk * rewardMultiplier)).toFixed(5)) 
     : Number((entryPrice - (risk * rewardMultiplier)).toFixed(5));
 
   const slPips = calculatePips(entryPrice, stopLoss, pair);
   const tpPips = calculatePips(entryPrice, takeProfit, pair);
 
+  const direction = (dailyBias === 'BULLISH' || dailyBias === 'BUY') ? 'BULLISH' : 'BEARISH';
+
   return {
     pair,
-    bias,
+    direction,
+    bias: direction,
     risk,
     riskRewardRatio: `1:${rewardMultiplier}`,
     slPips,
@@ -67,7 +87,6 @@ export function evaluateIccSetup(pair, currentBars, activeAois) {
     timestamp: Date.now()
   };
 }
-
 
 
 

@@ -33,11 +33,10 @@ export async function getPlansAndConfig(req, res) {
   }
 }
 
-// Initialize Paystack Payment Securely on Backend
 export async function initializeSubscriptionPayment(req, res) {
   try {
     const { plan_key } = req.body;
-    const userId = req.userId; // Provided by verifyJWT middleware
+    const userId = req.userId;
 
     const { data: user, error: userError } = await supabase
       .from('users')
@@ -105,7 +104,6 @@ export async function initializeSubscriptionPayment(req, res) {
   }
 }
 
-// Verify Paystack Transaction Manually (Fallback if webhook is delayed)
 export async function verifySubscriptionPayment(req, res) {
   try {
     const { reference } = req.params;
@@ -142,31 +140,38 @@ export async function verifySubscriptionPayment(req, res) {
       return res.status(400).json({ success: false, message: 'Plan not found' });
     }
 
-    // Calculate period end dynamically using plan.days matching webhook format
+    const periodStart = new Date();
     const periodEnd = new Date();
     periodEnd.setDate(periodEnd.getDate() + plan.days);
 
-    // 1. Uniform subscription upsert matching webhook schema
+    const amountPaid = txData.amount / 100;
+
+    // 1. Upsert active subscription
     await supabase
       .from('subscriptions')
       .upsert([{
         user_id: userId,
         status: 'active',
-        plan_key: planKey,
+        plan_type: planKey,
+        amount: amountPaid,
         current_period_end: periodEnd.toISOString(),
         trial_ends_at: null,
-        updated_at: new Date().toISOString()
+        updated_at: periodStart.toISOString()
       }], { onConflict: 'user_id' });
 
-    // 2. Update user profile status & plan matching webhook schema
+    // 2. Log history
     await supabase
-      .from('users')
-      .update({
-        subscription_status: 'Active',
-        subscription_plan: planKey,
-        subscription_amount: txData.amount / 100
-      })
-      .eq('id', userId);
+      .from('subscription_history')
+      .insert([{
+        user_id: userId,
+        plan_key: planKey,
+        amount: amountPaid,
+        status: 'success',
+        reference: reference,
+        payment_method: 'paystack',
+        period_start: periodStart.toISOString(),
+        period_end: periodEnd.toISOString()
+      }]);
 
     await processReferralReward(userId);
 
@@ -178,5 +183,30 @@ export async function verifySubscriptionPayment(req, res) {
   } catch (err) {
     console.error('Verification error:', err.response?.data || err.message);
     return res.status(500).json({ success: false, message: 'Failed to verify transaction' });
+  }
+}
+
+/**
+ * Returns full subscription history for the logged-in user
+ */
+export async function getSubscriptionHistory(req, res) {
+  try {
+    const userId = req.userId;
+
+    const { data: history, error } = await supabase
+      .from('subscription_history')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      success: true,
+      history
+    });
+  } catch (err) {
+    console.error('Fetch history error:', err.message);
+    return res.status(500).json({ success: false, message: 'Failed to fetch subscription history' });
   }
 }

@@ -4,7 +4,6 @@ import crypto from 'crypto';
 
 export const handlePaystackWebhook = async (req, res) => {
   try {
-    // 1. Verify Paystack signature using the correct backend secret key
     const hash = crypto
       .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
       .update(JSON.stringify(req.body))
@@ -16,10 +15,9 @@ export const handlePaystackWebhook = async (req, res) => {
 
     const event = req.body;
 
-    // 2. Listen for successful charge events
     if (event.event === 'charge.success') {
       const transactionData = event.data;
-      const reference = transactionData.reference; // Format: HOBA-{PLANKEY}-{TIMESTAMP}
+      const reference = transactionData.reference; 
       const metadata = transactionData.metadata;
       const customer = transactionData.customer;
 
@@ -30,7 +28,6 @@ export const handlePaystackWebhook = async (req, res) => {
       }
       const planKey = refParts[1].toLowerCase();
 
-      // 3. Fetch plan details and duration dynamically from Supabase
       const { data: plan, error: planError } = await supabase
         .from('subscription_plans')
         .select('*')
@@ -42,7 +39,6 @@ export const handlePaystackWebhook = async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // 4. Find user by metadata user_id, or fallback to email / phone matching
       let userId = metadata?.user_id;
 
       if (!userId && customer?.email) {
@@ -68,36 +64,42 @@ export const handlePaystackWebhook = async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // 5. Calculate subscription period end date dynamically using plan.days from database
+      const periodStart = new Date();
       const periodEnd = new Date();
       periodEnd.setDate(periodEnd.getDate() + plan.days);
 
-      // 6. Update or insert into subscriptions table with active status & valid period columns
-     await supabase
+      const amountPaidUSD = transactionData.amount / 100;
+
+      // 1. Update primary active subscription
+      await supabase
         .from('subscriptions')
-        .update([{
+        .upsert([{
           user_id: userId,
           status: 'active',
-          plan_type: planKey,          
+          plan_type: planKey,
+          amount: amountPaidUSD,
           current_period_end: periodEnd.toISOString(),
           trial_ends_at: null,
-          updated_at: new Date().toISOString()
+          updated_at: periodStart.toISOString()
         }], { onConflict: 'user_id' });
 
-      // 7. Update user profile status & plan
+      // 2. Log historical entry for user tracking & dashboard history
       await supabase
-        .from('users')
-        .update({
-          subscription_status: 'Active',
-          subscription_plan: planKey,
-          subscription_amount: transactionData.amount / 100
-        })
-        .eq('id', userId);
+        .from('subscription_history')
+        .insert([{
+          user_id: userId,
+          plan_key: planKey,
+          amount: amountPaidUSD,
+          status: 'success',
+          reference: reference,
+          payment_method: 'paystack',
+          period_start: periodStart.toISOString(),
+          period_end: periodEnd.toISOString()
+        }]);
 
-      // 8. Trigger automated referral reward securely server-side
       await processReferralReward(userId);
 
-      console.log(`[PAYMENT_SUCCESS]: User ${userId} successfully upgraded to ${plan.name} (${plan.days} days) via Paystack webhook.`);
+      console.log(`[PAYMENT_SUCCESS]: User ${userId} upgraded to ${plan.name}. Historical log created.`);
     }
 
     return res.status(200).json({ received: true });

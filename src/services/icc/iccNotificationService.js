@@ -7,12 +7,12 @@ dotenv.config();
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
 /**
- * Persists generated signals (including Pips & RR) to Supabase and broadcasts alerts.
+ * Persists generated signals (including Pips & RR) to Supabase and broadcasts alerts with interactive Risk Calculator buttons.
  * @param {Object} signal 
  */
 async function dispatchAndLogSignal(signal) {
   try {
-    // 1. Log signal with Pips and RR to Supabase signals table
+    // 1. Log signal with Pips and RR to Supabase signals table and return the inserted row (including id)
     const { data: signalData, error: signalError } = await supabase
       .from('signals')
       .insert([{
@@ -25,11 +25,16 @@ async function dispatchAndLogSignal(signal) {
         sl_pips: signal.slPips,
         tp_pips: signal.tpPips,
         aoi_id: signal.aoiId,
-        status: 'PENDING'
+        status: 'PENDING',
+        max_profit_pips: 0,
+        notified_one_to_one: false
       }])
-      .select();
+      .select()
+      .single();
 
     if (signalError) throw signalError;
+
+    const signalId = signalData.id;
 
     // 2. Query subscriptions table and join with users
     const { data: activeSubs, error: subError } = await supabase
@@ -86,10 +91,21 @@ ${accentLine}
 <i>Status: ✅ Verified Member</i>
     `.trim();
 
-    // 4. Broadcast concurrently
+    // 4. Attach Inline Keyboard with Risk Calculator button for this exact signal
+    const replyMarkup = {
+      inline_keyboard: [
+        [{ text: '🧮 Calculate Risk for this Setup', callback_data: `calc_select_${signalId}` }],
+        [{ text: '🏠 Back to Main Menu', callback_data: 'back_to_menu' }]
+      ]
+    };
+
+    // 5. Broadcast concurrently
     const broadcastPromises = targetChatIds.map(async (telegramId) => {
       try {
-        await bot.telegram.sendMessage(telegramId, message, { parse_mode: 'HTML' });
+        await bot.telegram.sendMessage(telegramId, message, { 
+          parse_mode: 'HTML',
+          reply_markup: replyMarkup
+        });
       } catch (err) {
         console.error(`[TELEGRAM_SEND_ERROR]: Failed to send to ${telegramId}:`, err.message);
       }
@@ -97,7 +113,7 @@ ${accentLine}
 
     await Promise.all(broadcastPromises);
 
-    console.log(`Signal with Pips/RR sent to ${targetChatIds.length} subscriber(s) for ${signal.pair}`);
+    console.log(`Signal with Pips/RR and Risk Calculator button sent to ${targetChatIds.length} subscriber(s) for ${signal.pair}`);
     return true;
 
   } catch (error) {
@@ -112,6 +128,14 @@ export { dispatchAndLogSignal };
 
 
 
+
+
+
+
+
+
+
+
 // import { supabase } from '../../config/supabase.js';
 // import { Telegraf } from 'telegraf';
 // import dotenv from 'dotenv';
@@ -121,12 +145,12 @@ export { dispatchAndLogSignal };
 // const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
 // /**
-//  * Persists generated signals to Supabase and broadcasts alerts only to users with active/trialing subscriptions and a valid telegram_id.
+//  * Persists generated signals (including Pips & RR) to Supabase and broadcasts alerts.
 //  * @param {Object} signal 
 //  */
 // async function dispatchAndLogSignal(signal) {
 //   try {
-//     // 1. Log signal to Supabase signals table
+//     // 1. Log signal with Pips and RR to Supabase signals table
 //     const { data: signalData, error: signalError } = await supabase
 //       .from('signals')
 //       .insert([{
@@ -135,6 +159,9 @@ export { dispatchAndLogSignal };
 //         entry_price: signal.entryPrice,
 //         stop_loss: signal.stopLoss,
 //         take_profit: signal.takeProfit,
+//         risk_reward: signal.riskRewardRatio,
+//         sl_pips: signal.slPips,
+//         tp_pips: signal.tpPips,
 //         aoi_id: signal.aoiId,
 //         status: 'PENDING'
 //       }])
@@ -142,7 +169,7 @@ export { dispatchAndLogSignal };
 
 //     if (signalError) throw signalError;
 
-//     // 2. Query subscriptions table and join with users using foreign key relation (subscriptions.user_id = users.id)
+//     // 2. Query subscriptions table and join with users
 //     const { data: activeSubs, error: subError } = await supabase
 //       .from('subscriptions')
 //       .select(`
@@ -163,7 +190,6 @@ export { dispatchAndLogSignal };
 //       return true;
 //     }
 
-//     // 3. Extract unique, non-null Telegram IDs from the joined user records
 //     const targetChatIds = [...new Set(
 //       activeSubs
 //         .map(sub => sub.users?.telegram_id)
@@ -175,31 +201,30 @@ export { dispatchAndLogSignal };
 //       return true;
 //     }
 
-//     // 4. Format Telegram Alert Message
-//     // Format a gorgeous, high-impact Telegram Alert Message
+//     // 3. Format Telegram Alert Message with Pips & RR
 //     const isBullish = signal.bias === 'BULLISH';
 //     const directionEmoji = isBullish ? '🟢 <b>BUY SETUP</b>' : '🔴 <b>SELL SETUP</b>';
 //     const accentLine = '━━━━━━━━━━━━━━━━━━━';
 
 //     const message = `
-//     <b>NEW SIGNAL ALERT</B>
+// <b>NEW SIGNAL ALERT</b>
 // ${accentLine}
-// ${accentLine}
-// 🚀 <b>HOBA LABS</b> 🚀
+// 📈 <b>HOBA LABS</b> 
 // ${accentLine}
 // <b>Asset / Pair:</b>  <code>${signal.pair}</code>
 // <b>Direction:</b>     ${directionEmoji}
-// <b>Setup Type:</b>    <code>ICC</code>
+// <b>Risk:Reward:</b>   <code>${signal.riskRewardRatio}</code>
 // ${accentLine}
-// 🎯 <b>ENTRY DETAILS</b>
+// 🎯 <b>EXECUTION TARGETS</b>
 // • <b>Entry Price:</b>  <code>${signal.entryPrice}</code>
-// • <b>Stop Loss:</b>    <code>${signal.stopLoss}</code>
-// • <b>Take Profit:</b>  <code>${signal.takeProfit}</code>
+// • <b>Stop Loss:</b>    <code>${signal.stopLoss}</code> (${signal.slPips} pips)
+// • <b>Take Profit:</b>  <code>${signal.takeProfit}</code> (${signal.tpPips} pips)
+// • <b>Risk Reward:</b>  <code>${signal.riskRewardRatio}</code>
 // ${accentLine}
-//  <i>Status: Verified Member</i>
+// <i>Status: ✅ Verified Member</i>
 //     `.trim();
 
-//     // 5. Broadcast to each subscribed user concurrently
+//     // 4. Broadcast concurrently
 //     const broadcastPromises = targetChatIds.map(async (telegramId) => {
 //       try {
 //         await bot.telegram.sendMessage(telegramId, message, { parse_mode: 'HTML' });
@@ -210,7 +235,7 @@ export { dispatchAndLogSignal };
 
 //     await Promise.all(broadcastPromises);
 
-//     console.log(`Signal sent to ${targetChatIds.length} subscriber(s) for ${signal.pair}`);
+//     console.log(`Signal with Pips/RR sent to ${targetChatIds.length} subscriber(s) for ${signal.pair}`);
 //     return true;
 
 //   } catch (error) {

@@ -33,7 +33,7 @@ async function sendTelegramBroadcast(message) {
         `${BACKEND_URL}/api/telegram/broadcast`,
         { chat_id: chatId, message },
         { headers: { 'x-internal-secret': INTERNAL_SERVICE_SECRET } }
-      ).catch(() => {});
+      ).catch(() => { });
     }
   } catch (err) {
     console.error('[BROADCAST_ERROR]:', err.message);
@@ -80,17 +80,17 @@ export async function monitorOpenTrades() {
         // before evaluating triggers, preventing instant overlapping ticks from false-firing.
         if (ageInMinutes < 1) continue;
 
-        const touchedEntry = isBullish 
-          ? currentPrice <= signal.entry_price 
+        const touchedEntry = isBullish
+          ? currentPrice <= signal.entry_price
           : currentPrice >= signal.entry_price;
 
         if (touchedEntry) {
           await supabase.from('signals').update({ status: 'TRIGGERED' }).eq('id', signal.id);
 
           const msg = `
-⚡ <b>TRADE TRIGGERED</b>
+<b>TRADE TRIGGERED</b>
 ━━━━━━━━━━━━━━━━━━━
-🚀 <b>HOBA LABS</b> 🚀
+📈 <b>HOBA LABS</b> 
 ━━━━━━━━━━━━━━━━━━━
 <b>Pair:</b>        <code>${signal.pair}</code>
 <b>Direction:</b>   ${isBullish ? '🟢 BUY' : '🔴 SELL'}
@@ -104,14 +104,20 @@ export async function monitorOpenTrades() {
         }
 
         // Invalidation check (price ran away past 2x risk)
-        const invalidationBreached = isBullish 
-          ? currentPrice > signal.entry_price + (riskPips * 2 / pipMultiplier) 
+        const invalidationBreached = isBullish
+          ? currentPrice > signal.entry_price + (riskPips * 2 / pipMultiplier)
           : currentPrice < signal.entry_price - (riskPips * 2 / pipMultiplier);
 
         if (hoursElapsed >= 4 || invalidationBreached) {
           await supabase.from('signals').update({ status: 'MISSED', outcome: 'EXPIRED' }).eq('id', signal.id);
-          
-          const msg = `⌛ <b>SETUP EXPIRED</b>\nPair: <code>${signal.pair}</code> — Setup invalidated cleanly.`;
+
+          const msg = `
+⌛ <b>SETUP EXPIRED</b>\n
+━━━━━━━━━━━━━━━━━━━
+📈 <b>HOBA LABS</b> 
+━━━━━━━━━━━━━━━━━━━
+Pair: <code>${signal.pair}</code>\nMovement invalidated.
+          `;
           await sendTelegramBroadcast(msg);
           continue;
         }
@@ -130,8 +136,8 @@ export async function monitorOpenTrades() {
         // Take Profit
         const hitTp = isBullish ? currentPrice >= signal.take_profit : currentPrice <= signal.take_profit;
         if (hitTp) {
-          await supabase.from('signals').update({ 
-            status: 'COMPLETED', outcome: 'TP', exit_price: signal.take_profit, pips_gained: signal.tp_pips 
+          await supabase.from('signals').update({
+            status: 'COMPLETED', outcome: 'TP', exit_price: signal.take_profit, pips_gained: signal.tp_pips
           }).eq('id', signal.id);
 
           await sendTelegramBroadcast(`🎯 <b>PROFIT HIT! (+${signal.tp_pips} Pips)</b>\nPair: <code>${signal.pair}</code>`);
@@ -141,8 +147,8 @@ export async function monitorOpenTrades() {
         // Stop Loss
         const hitSl = isBullish ? currentPrice <= signal.stop_loss : currentPrice >= signal.stop_loss;
         if (hitSl) {
-          await supabase.from('signals').update({ 
-            status: 'COMPLETED', outcome: 'SL', exit_price: signal.stop_loss, pips_gained: -signal.sl_pips 
+          await supabase.from('signals').update({
+            status: 'COMPLETED', outcome: 'SL', exit_price: signal.stop_loss, pips_gained: -signal.sl_pips
           }).eq('id', signal.id);
 
           await sendTelegramBroadcast(`💔 <b>STOP LOSS HIT (-${signal.sl_pips} Pips)</b>\nPair: <code>${signal.pair}</code>`);
