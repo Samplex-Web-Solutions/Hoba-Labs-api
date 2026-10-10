@@ -122,13 +122,14 @@ bot.action('view_calendar', async (ctx) => {
 });
 
 // --- Subscription Check Handler (With Navigation) ---
+// --- Subscription Check Handler (With Navigation) ---
 const handleSubscriptionCheck = async (ctx) => {
   const telegramId = ctx.from.id.toString();
 
   try {
     const { data: subscriptions, error } = await supabase
       .from('subscriptions')
-      .select('status, trial_ends_at, current_period_end, plan_name, users!subscriptions_user_id_fkey ( telegram_id, username, email )')
+      .select('status, trial_ends_at, current_period_end, plan_type, users!subscriptions_user_id_fkey ( telegram_id, username, email )')
       .in('status', ['active', 'trialing']);
 
     if (error || !subscriptions || subscriptions.length === 0) {
@@ -167,7 +168,7 @@ const handleSubscriptionCheck = async (ctx) => {
 
     const responseText = `*Account Status Summary*\n\n` +
       `• *Username:* @${userSub.users?.username || 'Linked'}\n` +
-      `• *Plan:* ${userSub.plan_name || 'Standard'}\n` +
+      `• *Plan:* ${(userSub.plan_type || 'Standard').toUpperCase()}\n` +
       `• *Status:* ${status.toUpperCase()} ${isActive ? '🟢' : '🔴'}\n` +
       `• *Expires On:* ${expiryText}`;
 
@@ -177,12 +178,6 @@ const handleSubscriptionCheck = async (ctx) => {
     await ctx.reply('⚠️ Error fetching subscription status. Please try again later.', getBackToMenuKeyboard());
   }
 };
-
-bot.command('status', handleSubscriptionCheck);
-bot.action('check_subscription', async (ctx) => {
-  await ctx.answerCbQuery();
-  await handleSubscriptionCheck(ctx);
-});
 
 // --- View Signals Handler (With Navigation at the bottom) ---
 const handleViewSignals = async (ctx) => {
