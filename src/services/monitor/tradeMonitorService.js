@@ -4,6 +4,19 @@ import axios from 'axios';
 const BACKEND_URL = process.env.BACKEND_URL;
 const INTERNAL_SERVICE_SECRET = process.env.INTERNAL_SERVICE_SECRET;
 
+function isMarketOpen() {
+  const now = new Date();
+  const day = now.getUTCDay();
+  const hour = now.getUTCHours();
+  const minute = now.getUTCMinutes();
+  
+  if (day === 6) return false;
+  if (day === 0 && hour < 22) return false;
+  if (day === 5 && (hour > 22 || (hour === 22 && minute >= 0))) return false;
+
+  return true;
+}
+
 async function getCurrentMarketPrice(pair) {
   try {
     const cleanPair = pair.toUpperCase().replace('/', '');
@@ -12,7 +25,6 @@ async function getCurrentMarketPrice(pair) {
     const price = tickData?.mid || tickData?.price || tickData?.last || tickData?.close || tickData?.bid;
     return price ? parseFloat(price) : null;
   } catch (err) {
-    console.error(`[BIQUOTE_PRICE_ERROR] Could not fetch price for ${pair}:`, err.message);
     return null;
   }
 }
@@ -35,13 +47,13 @@ async function sendTelegramBroadcast(message) {
         { headers: { 'x-internal-secret': INTERNAL_SERVICE_SECRET } }
       ).catch(() => { });
     }
-  } catch (err) {
-    console.error('[BROADCAST_ERROR]:', err.message);
-  }
+  } catch (err) {}
 }
 
 export async function monitorOpenTrades() {
   try {
+    if (!isMarketOpen()) return;
+
     const { data: signals, error } = await supabase
       .from('signals')
       .select('*')
@@ -69,56 +81,49 @@ export async function monitorOpenTrades() {
       // Expire stale setups older than 4 hours
       if (signal.status === 'PENDING' && hoursElapsed > 4) {
         await supabase.from('signals').update({ status: 'MISSED', outcome: 'EXPIRED' }).eq('id', signal.id);
+        await sendTelegramBroadcast(`⌛ <b>SETUP EXPIRED</b>\nPair: <code>${signal.pair}</code>\nTime expired before fill. Remove pending order.`);
         continue;
       }
 
       // ----------------------------------------------------
-      // 1. PENDING -> TRIGGERED CHECK
+      // 1. PENDING ORDER MANAGEMENT
       // ----------------------------------------------------
       if (signal.status === 'PENDING') {
-        // PROFESSIONAL GUARD: Give the signal at least a 1-minute buffer after creation 
-        // before evaluating triggers, preventing instant overlapping ticks from false-firing.
         if (ageInMinutes < 1) continue;
 
-        const touchedEntry = isBullish
-          ? currentPrice <= signal.entry_price
-          : currentPrice >= signal.entry_price;
+        const orderType = signal.order_type || (isBullish ? 'BUY_LIMIT' : 'SELL_LIMIT');
+        const filled =
+          orderType === 'BUY_LIMIT'  ? currentPrice <= signal.entry_price :
+          orderType === 'SELL_LIMIT' ? currentPrice >= signal.entry_price :
+          orderType === 'BUY_STOP'   ? currentPrice >= signal.entry_price :
+                                       currentPrice <= signal.entry_price; // SELL_STOP
 
-        if (touchedEntry) {
+        if (filled) {
           await supabase.from('signals').update({ status: 'TRIGGERED' }).eq('id', signal.id);
 
-          const msg = `
-<b>TRADE TRIGGERED</b>
+          const filledMsg = `
+<b>ORDER FILLED</b>
 ━━━━━━━━━━━━━━━━━━━
-📈 <b>HOBA LABS</b> 
+📈 <b>HOBA LABS</b>
 ━━━━━━━━━━━━━━━━━━━
-<b>Pair:</b>        <code>${signal.pair}</code>
-<b>Direction:</b>   ${isBullish ? '🟢 BUY' : '🔴 SELL'}
-<b>Entry Price:</b> <code>${signal.entry_price}</code>
+<b>Pair:</b>   <code>${signal.pair}</code>
+<b>Order:</b>  ${orderType.replace('_', ' ')}
+<b>Entry:</b>  <code>${signal.entry_price}</code>
 ━━━━━━━━━━━━━━━━━━━
-<i>Price has entered the zone. Execution active!</i>
+<i>Your pending order is now active.</i>
           `.trim();
 
-          await sendTelegramBroadcast(msg);
+          await sendTelegramBroadcast(filledMsg);
           continue;
         }
 
-        // Invalidation check (price ran away past 2x risk)
-        const invalidationBreached = isBullish
-          ? currentPrice > signal.entry_price + (riskPips * 2 / pipMultiplier)
-          : currentPrice < signal.entry_price - (riskPips * 2 / pipMultiplier);
+        // Cancel if price reached SL or TP without ever filling the order
+        const hitSlFirst = isBullish ? currentPrice <= signal.stop_loss : currentPrice >= signal.stop_loss;
+        const hitTpFirst = isBullish ? currentPrice >= signal.take_profit : currentPrice <= signal.take_profit;
 
-        if (hoursElapsed >= 4 || invalidationBreached) {
-          await supabase.from('signals').update({ status: 'MISSED', outcome: 'EXPIRED' }).eq('id', signal.id);
-
-          const msg = `
-⌛ <b>SETUP EXPIRED</b>\n
-━━━━━━━━━━━━━━━━━━━
-📈 <b>HOBA LABS</b> 
-━━━━━━━━━━━━━━━━━━━
-Pair: <code>${signal.pair}</code>\nMovement invalidated.
-          `;
-          await sendTelegramBroadcast(msg);
+        if (hitSlFirst || hitTpFirst) {
+          await supabase.from('signals').update({ status: 'MISSED', outcome: 'CANCELLED' }).eq('id', signal.id);
+          await sendTelegramBroadcast(`⌛ <b>ORDER CANCELLED</b>\nPair: <code>${signal.pair}</code>\nSetup invalidated before entry. Remove the pending order.`);
           continue;
         }
       }
@@ -133,7 +138,6 @@ Pair: <code>${signal.pair}</code>\nMovement invalidated.
 
         const maxProfit = Math.max(signal.max_profit_pips || 0, currentProfitPips);
 
-        // Take Profit
         const hitTp = isBullish ? currentPrice >= signal.take_profit : currentPrice <= signal.take_profit;
         if (hitTp) {
           await supabase.from('signals').update({
@@ -144,7 +148,6 @@ Pair: <code>${signal.pair}</code>\nMovement invalidated.
           continue;
         }
 
-        // Stop Loss
         const hitSl = isBullish ? currentPrice <= signal.stop_loss : currentPrice >= signal.stop_loss;
         if (hitSl) {
           await supabase.from('signals').update({
@@ -155,7 +158,6 @@ Pair: <code>${signal.pair}</code>\nMovement invalidated.
           continue;
         }
 
-        // 1:1 Milestone / Break-Even Advisor
         if (currentProfitPips >= riskPips && !signal.notified_one_to_one) {
           await supabase.from('signals').update({ notified_one_to_one: true, max_profit_pips: maxProfit }).eq('id', signal.id);
           await sendTelegramBroadcast(`💡 <b>ADVISOR: SET BREAK-EVEN</b>\nPair: <code>${signal.pair}</code> reached 1:1 risk-reward. Protect capital!`);
@@ -171,4 +173,3 @@ Pair: <code>${signal.pair}</code>\nMovement invalidated.
     console.error('[TRADE_MONITOR_WORKER_ERROR]:', err.message);
   }
 }
-
