@@ -11,10 +11,9 @@ export const checkSubscriptionMiddleware = async (req, res, next) => {
             return res.status(401).json({ error: 'Unauthorized: No user session found' });
         }
 
-        // Fetch user subscription status directly from the subscriptions table
         const { data: subscription, error } = await supabase
             .from('subscriptions')
-            .select('status, plan_type, current_period_end, trial_ends_at')
+            .select('id, status, plan_type, current_period_end, trial_ends_at')
             .eq('user_id', userId)
             .single();
 
@@ -23,12 +22,36 @@ export const checkSubscriptionMiddleware = async (req, res, next) => {
         }
 
         const status = (subscription.status || '').trim().toLowerCase();
-        const validStatuses = ['active', 'trialing'];
+        const now = new Date();
 
+        // 1. Determine active expiry threshold date
+        const expiryDate = status === 'trialing' 
+            ? (subscription.trial_ends_at ? new Date(subscription.trial_ends_at) : null)
+            : (subscription.current_period_end ? new Date(subscription.current_period_end) : null);
+
+        // 2. If expiry date exists and has passed, automatically update database status to 'expired'
+        if (expiryDate && expiryDate < now) {
+            if (status !== 'expired') {
+                await supabase
+                    .from('subscriptions')
+                    .update({ 
+                        status: 'expired', 
+                        updated_at: now.toISOString() 
+                    })
+                    .eq('user_id', userId);
+            }
+
+            return res.status(403).json({ 
+                error: 'Subscription Expired', 
+                message: 'Your subscription or trial period has ended. Please upgrade to continue accessing signals.' 
+            });
+        }
+
+        const validStatuses = ['active', 'trialing'];
         if (!validStatuses.includes(status)) {
             return res.status(403).json({ 
                 error: 'Subscription Required', 
-                message: 'Your account requires an active or trialing subscription to access live institutional trading signals.' 
+                message: 'Your account requires an active subscription to access trading signals.' 
             });
         }
 

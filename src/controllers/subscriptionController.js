@@ -15,7 +15,7 @@ export async function getPlansAndConfig(req, res) {
     if (plansError || settingsError) throw new Error('Database fetch error');
 
     const exchangeRateSetting = settings.find(s => s.key === 'naira_exchange_rate');
-    const exchangeRate = exchangeRateSetting ? Number(exchangeRateSetting.value) : 1350;
+    const exchangeRate = exchangeRateSetting ? Number(exchangeRateSetting.value) : 1500;
 
     const formattedPlans = plans.map(plan => ({
       ...plan,
@@ -68,7 +68,7 @@ export async function initializeSubscriptionPayment(req, res) {
       .eq('key', 'naira_exchange_rate')
       .single();
 
-    const exchangeRate = settings ? Number(settings.value) : 1350;
+    const exchangeRate = settings ? Number(settings.value) : 1500;
     const totalNaira = Number(plan.amount) * exchangeRate;
     const amountInKobo = Math.round(totalNaira * 100);
 
@@ -146,10 +146,10 @@ export async function verifySubscriptionPayment(req, res) {
 
     const amountPaid = txData.amount / 100;
 
-    // 1. Explicit Check & Update / Insert for Subscriptions table
+    // 1. Check existing subscription record to preserve or update trial_ends_at safely
     const { data: existingSub } = await supabase
       .from('subscriptions')
-      .select('id')
+      .select('id, trial_ends_at')
       .eq('user_id', userId)
       .single();
 
@@ -159,7 +159,7 @@ export async function verifySubscriptionPayment(req, res) {
       plan_type: planKey,
       amount: amountPaid,
       current_period_end: periodEnd.toISOString(),
-      trial_ends_at: null,
+      trial_ends_at: existingSub?.trial_ends_at || periodEnd.toISOString(),
       updated_at: periodStart.toISOString()
     };
 
@@ -169,13 +169,17 @@ export async function verifySubscriptionPayment(req, res) {
         .update(subPayload)
         .eq('user_id', userId);
 
-      if (updateError) console.error('[SUB_UPDATE_ERROR]:', updateError.message);
+      if (updateError) {
+        console.error('[SUB_UPDATE_ERROR]:', updateError.message);
+      }
     } else {
       const { error: insertError } = await supabase
         .from('subscriptions')
         .insert([subPayload]);
 
-      if (insertError) console.error('[SUB_INSERT_ERROR]:', insertError.message);
+      if (insertError) {
+        console.error('[SUB_INSERT_ERROR]:', insertError.message);
+      }
     }
 
     // 2. Idempotent check: Prevent duplicate history entry if webhook already logged it

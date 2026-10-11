@@ -70,10 +70,9 @@ export const handlePaystackWebhook = async (req, res) => {
 
       const amountPaidUSD = transactionData.amount / 100;
 
-      // 1. Explicit Check & Update / Insert for Subscriptions table
       const { data: existingSub } = await supabase
         .from('subscriptions')
-        .select('id')
+        .select('id, trial_ends_at')
         .eq('user_id', userId)
         .single();
 
@@ -83,7 +82,7 @@ export const handlePaystackWebhook = async (req, res) => {
         plan_type: planKey,
         amount: amountPaidUSD,
         current_period_end: periodEnd.toISOString(),
-        trial_ends_at: null,
+        trial_ends_at: existingSub?.trial_ends_at || periodEnd.toISOString(),
         updated_at: periodStart.toISOString()
       };
 
@@ -98,7 +97,7 @@ export const handlePaystackWebhook = async (req, res) => {
           .insert([subPayload]);
       }
 
-      // 2. Idempotent check: Prevent duplicate history entry if frontend verify ran first
+      // Idempotent check: Prevent duplicate history entry if frontend verify ran first
       const { data: existingHistory } = await supabase
         .from('subscription_history')
         .select('id')
