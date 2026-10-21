@@ -15,7 +15,7 @@ export const checkSubscriptionMiddleware = async (req, res, next) => {
             .from('subscriptions')
             .select('id, status, plan_type, current_period_end, trial_ends_at')
             .eq('user_id', userId)
-            .single();
+            .single(); 
 
         if (error || !subscription) {
             return res.status(403).json({ error: 'Forbidden: Subscription record not found' });
