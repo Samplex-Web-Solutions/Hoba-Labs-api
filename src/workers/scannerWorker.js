@@ -5,7 +5,7 @@ import { evaluateIccSetup } from '../icc/engine/engine.js';
 import { dispatchAndLogSignal } from '../services/icc/iccNotificationService.js';
 import { supabase } from '../config/supabase.js';
 
-const TARGET_PAIRS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCAD', 'NZDUSD', 'USDCHF'];
+const TARGET_PAIRS = ['XAUUSD', 'EURUSD', 'GBPUSD', 'AUDUSD'];
 const recentSignalsMap = new Map();
 const COOLDOWN_PERIOD_MS = 2 * 60 * 60 * 1000;
 
