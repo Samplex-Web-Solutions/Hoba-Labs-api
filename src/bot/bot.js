@@ -171,14 +171,15 @@ const handleSubscriptionCheck = async (ctx) => {
       }
     }
 
-    const responseText = `*Account Status Summary*\n\n` +
-      `• *Username:* @${userSub.users?.username || 'Linked'}\n` +
-      `• *Plan:* ${(userSub.plan_type || 'Free Trial').toUpperCase()}\n` +
-      `• *Amount:* $${Number(userSub.amount || 0).toFixed(2)}\n` +
-      `• *Status:* ${status.toUpperCase()} ${isActive ? '🟢' : '🔴'}\n` +
-      `• *Expires On:* ${expiryText}`;
+    // Using HTML tags (<b>) instead of Markdown asterisks (*) to safely handle underscores in usernames and date symbols
+    const responseText = `<b>Account Status Summary</b>\n\n` +
+      `• <b>Username:</b> @${userSub.users?.username || 'Linked'}\n` +
+      `• <b>Plan:</b> ${(userSub.plan_type || 'Free Trial').toUpperCase()}\n` +
+      `• <b>Amount:</b> $${Number(userSub.amount || 0).toFixed(2)}\n` +
+      `• <b>Status:</b> ${status.toUpperCase()} ${isActive ? '🟢' : '🔴'}\n` +
+      `• <b>Expires On:</b> ${expiryText}`;
 
-    await ctx.replyWithMarkdown(responseText, getBackToMenuKeyboard());
+    await ctx.reply(responseText, { parse_mode: 'HTML', ...getBackToMenuKeyboard() });
   } catch (err) {
     console.error('[TELEGRAM_STATUS_ERROR]:', err);
     await ctx.reply('⚠️ Error fetching subscription status. Please try again later.', getBackToMenuKeyboard());
