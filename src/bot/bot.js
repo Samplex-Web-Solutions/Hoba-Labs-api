@@ -96,16 +96,16 @@ const handleEconomicCalendar = async (ctx) => {
       const previous = ev.previous !== null && ev.previous !== undefined ? ev.previous : 'N/A';
       const actual = ev.actual !== null && ev.actual !== undefined ? ev.actual : 'Pending';
 
-      const msg = `📅 *${country} (${currency}) — ${name}*\n\n` +
-        `⭐ *Importance:* ${importance}\n` +
-        `⏱️ *Time:* ${time}\n` +
-        `📊 *Forecast:* ${forecast} | *Prev:* ${previous}\n` +
-        `🎯 *Actual:* ${actual}`;
+      const msg = `📅 <b>${country} (${currency}) — ${name}</b>\n\n` +
+        `⭐ <b>Importance:</b> ${importance}\n` +
+        `⏱️ <b>Time:</b> ${time}\n` +
+        `📊 <b>Forecast:</b> ${forecast} | <b>Prev:</b> ${previous}\n` +
+        `🎯 <b>Actual:</b> ${actual}`;
 
       if (i === topEvents.length - 1) {
-        await ctx.replyWithMarkdown(msg, getBackToMenuKeyboard());
+        await ctx.reply(msg, { parse_mode: 'HTML', ...getBackToMenuKeyboard() });
       } else {
-        await ctx.replyWithMarkdown(msg);
+        await ctx.reply(msg, { parse_mode: 'HTML' });
       }
     }
   } catch (err) {
@@ -120,7 +120,6 @@ bot.action('view_calendar', async (ctx) => {
   await handleEconomicCalendar(ctx);
 });
 
-// --- Subscription Status Check Handler ---
 // --- Subscription Status Check Handler ---
 const handleSubscriptionCheck = async (ctx) => {
   const telegramId = ctx.from.id.toString();
@@ -147,7 +146,6 @@ const handleSubscriptionCheck = async (ctx) => {
     let status = (userSub.status || 'inactive').toLowerCase();
     let isTimeValid = expiryDate ? expiryDate > now : false;
 
-    // Auto-sync status to expired in database if time has elapsed
     if (['active', 'trialing'].includes(status) && !isTimeValid) {
       status = 'expired';
       await supabase.from('subscriptions').update({ status: 'expired' }).eq('id', userSub.id);
@@ -172,7 +170,6 @@ const handleSubscriptionCheck = async (ctx) => {
       }
     }
 
-    // Uses <b> tags with HTML mode so usernames with underscores (@Zureck_Trade) won't break formatting
     const responseText = `<b>Account Status Summary</b>\n\n` +
       `• <b>Username:</b> @${userSub.users?.username || 'Linked'}\n` +
       `• <b>Plan:</b> ${(userSub.plan_type || 'Free Trial').toUpperCase()}\n` +
@@ -186,6 +183,12 @@ const handleSubscriptionCheck = async (ctx) => {
     await ctx.reply('⚠️ Error fetching subscription status. Please try again later.', getBackToMenuKeyboard());
   }
 };
+
+bot.command('status', handleSubscriptionCheck);
+bot.action('check_subscription', async (ctx) => {
+  await ctx.answerCbQuery();
+  await handleSubscriptionCheck(ctx);
+});
 
 // --- Subscription History Handler ---
 const handleSubscriptionHistory = async (ctx) => {
@@ -212,19 +215,19 @@ const handleSubscriptionHistory = async (ctx) => {
       return ctx.reply('📭 No transaction history found for your Account.', getBackToMenuKeyboard());
     }
 
-    let historyMessage = `📜 *YOUR SUBSCRIPTION HISTORY*\n━━━━━━━━━━━━━━━━━━━\n\n`;
+    let historyMessage = `📜 <b>YOUR SUBSCRIPTION HISTORY</b>\n━━━━━━━━━━━━━━━━━━━\n\n`;
 
     historyList.forEach((item, index) => {
       const startDate = new Date(item.period_start).toLocaleDateString();
       const endDate = new Date(item.period_end).toLocaleDateString();
-      historyMessage += `${index + 1}. *Plan:* \`${item.plan_type || item.plan_key || 'Standard'}\`\n` +
-        `   • *Amount:* \`₦${Number(item.amount).toFixed(2)}\`\n` +
-        `   • *Status:* ${item.status.toUpperCase()} 🟢\n` +
-        `   • *Period:* ${startDate} ➔ ${endDate}\n` +
-        `   • *Ref:* \`${item.reference || 'N/A'}\`\n\n`;
+      historyMessage += `${index + 1}. <b>Plan:</b> <code>${item.plan_type || item.plan_key || 'Standard'}</code>\n` +
+        `   • <b>Amount:</b> <code>₦${Number(item.amount).toFixed(2)}</code>\n` +
+        `   • <b>Status:</b> ${item.status.toUpperCase()} 🟢\n` +
+        `   • <b>Period:</b> ${startDate} ➔ ${endDate}\n` +
+        `   • <b>Ref:</b> <code>${item.reference || 'N/A'}</code>\n\n`;
     });
 
-    await ctx.replyWithMarkdown(historyMessage, getBackToMenuKeyboard());
+    await ctx.reply(historyMessage, { parse_mode: 'HTML', ...getBackToMenuKeyboard() });
   } catch (err) {
     console.error('[TELEGRAM_HISTORY_ERROR]:', err);
     await ctx.reply('⚠️ Error fetching subscription history ledger.', getBackToMenuKeyboard());
@@ -278,16 +281,16 @@ const handleViewSignals = async (ctx) => {
 
     for (let i = 0; i < signals.length; i++) {
       const sig = signals[i];
-      const msg = `🚨 *${sig.pair}* — *${sig.direction}*\n\n` +
-        `🎯 *Entry:* ${sig.entry_price}\n` +
-        `🛑 *SL:* ${sig.stop_loss}\n` +
-        `💰 *TP:* ${sig.take_profit}\n` +
-        `⏱️ *Time:* ${new Date(sig.created_at).toLocaleString()}`;
+      const msg = `🚨 <b>${sig.pair}</b> — <b>${sig.direction}</b>\n\n` +
+        `🎯 <b>Entry:</b> ${sig.entry_price}\n` +
+        `🛑 <b>SL:</b> ${sig.stop_loss}\n` +
+        `💰 <b>TP:</b> ${sig.take_profit}\n` +
+        `⏱️ <b>Time:</b> ${new Date(sig.created_at).toLocaleString()}`;
       
       if (i === signals.length - 1) {
-        await ctx.replyWithMarkdown(msg, getBackToMenuKeyboard());
+        await ctx.reply(msg, { parse_mode: 'HTML', ...getBackToMenuKeyboard() });
       } else {
-        await ctx.replyWithMarkdown(msg);
+        await ctx.reply(msg, { parse_mode: 'HTML' });
       }
     }
   } catch (err) {
@@ -338,8 +341,8 @@ bot.action('calc_start', async (ctx) => {
     userCalcSessions.set(ctx.from.id, { step: 'SELECTING_SIGNAL' });
 
     await ctx.editMessageText(
-      '🧮 *Hoba Labs Risk Calculator*\n\nSelect a pending signal below to calculate your risk & profit exposure:',
-      { parse_mode: 'Markdown', ...Markup.inlineKeyboard(buttons) }
+      '🧮 <b>Hoba Labs Risk Calculator</b>\n\nSelect a pending signal below to calculate your risk & profit exposure:',
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
     );
   } catch (err) {
     console.error('[CALC_START_ERROR]:', err);
@@ -368,10 +371,10 @@ bot.action(/^calc_select_(.+)$/, async (ctx) => {
     });
 
     await ctx.editMessageText(
-      `📊 *Selected:* \`${signal.pair} (${signal.direction})\`\n` +
-      `🎯 *Entry:* \`${signal.entry_price}\` | 🛑 *SL:* \`${signal.stop_loss}\` | 🎯 *TP:* \`${signal.take_profit}\`\n\n` +
-      `1️⃣ Please type your **Account Size** in USD (e.g. \`200\`):`,
-      { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('« Cancel', 'calc_start')]]) }
+      `📊 <b>Selected:</b> <code>${signal.pair} (${signal.direction})</code>\n` +
+      `🎯 <b>Entry:</b> <code>${signal.entry_price}</code> | 🛑 <b>SL:</b> <code>${signal.stop_loss}</code> | 🎯 <b>TP:</b> <code>${signal.take_profit}</code>\n\n` +
+      `1️⃣ Please type your <b>Account Size</b> in USD (e.g. <code>200</code>):`,
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('« Cancel', 'calc_start')]]) }
     );
   } catch (err) {
     console.error('[CALC_SELECT_ERROR]:', err);
@@ -397,9 +400,9 @@ bot.on('text', async (ctx, next) => {
     userCalcSessions.set(userId, session);
 
     return ctx.reply(
-      `💰 *Account Size Saved:* \`$${accountSize}\`\n\n` +
-      `2️⃣ Please type your preferred **Risk Percentage** (e.g. \`1\` for 1%, or \`5\`):`,
-      { parse_mode: 'Markdown' }
+      `💰 <b>Account Size Saved:</b> <code>$${accountSize}</code>\n\n` +
+      `2️⃣ Please type your preferred <b>Risk Percentage</b> (e.g. <code>1</code> for 1%, or <code>5</code>):`,
+      { parse_mode: 'HTML' }
     );
   }
 
@@ -475,9 +478,9 @@ bot.action('back_to_menu', async (ctx) => {
   await ctx.answerCbQuery();
   userCalcSessions.delete(ctx.from.id);
   await ctx.reply(
-    '🚀 *Hoba Labs Main Menu*\n\nChoose an option below:',
+    '🚀 <b>Hoba Labs Main Menu</b>\n\nChoose an option below:',
     {
-      parse_mode: 'Markdown',
+      parse_mode: 'HTML',
       ...getMainMenuKeyboard()
     }
   );
