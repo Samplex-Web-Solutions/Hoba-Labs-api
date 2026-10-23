@@ -121,6 +121,7 @@ bot.action('view_calendar', async (ctx) => {
 });
 
 // --- Subscription Status Check Handler ---
+// --- Subscription Status Check Handler ---
 const handleSubscriptionCheck = async (ctx) => {
   const telegramId = ctx.from.id.toString();
 
@@ -171,7 +172,7 @@ const handleSubscriptionCheck = async (ctx) => {
       }
     }
 
-    // Using HTML tags (<b>) instead of Markdown asterisks (*) to safely handle underscores in usernames and date symbols
+    // Uses <b> tags with HTML mode so usernames with underscores (@Zureck_Trade) won't break formatting
     const responseText = `<b>Account Status Summary</b>\n\n` +
       `• <b>Username:</b> @${userSub.users?.username || 'Linked'}\n` +
       `• <b>Plan:</b> ${(userSub.plan_type || 'Free Trial').toUpperCase()}\n` +
@@ -185,12 +186,6 @@ const handleSubscriptionCheck = async (ctx) => {
     await ctx.reply('⚠️ Error fetching subscription status. Please try again later.', getBackToMenuKeyboard());
   }
 };
-
-bot.command('status', handleSubscriptionCheck);
-bot.action('check_subscription', async (ctx) => {
-  await ctx.answerCbQuery();
-  await handleSubscriptionCheck(ctx);
-});
 
 // --- Subscription History Handler ---
 const handleSubscriptionHistory = async (ctx) => {
@@ -223,7 +218,7 @@ const handleSubscriptionHistory = async (ctx) => {
       const startDate = new Date(item.period_start).toLocaleDateString();
       const endDate = new Date(item.period_end).toLocaleDateString();
       historyMessage += `${index + 1}. *Plan:* \`${item.plan_type || item.plan_key || 'Standard'}\`\n` +
-        `   • *Amount:* \`$${Number(item.amount).toFixed(2)}\`\n` +
+        `   • *Amount:* \`₦${Number(item.amount).toFixed(2)}\`\n` +
         `   • *Status:* ${item.status.toUpperCase()} 🟢\n` +
         `   • *Period:* ${startDate} ➔ ${endDate}\n` +
         `   • *Ref:* \`${item.reference || 'N/A'}\`\n\n`;
