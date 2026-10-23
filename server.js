@@ -7,7 +7,7 @@ import webhookRoutes from './src/routes/webhookRoutes.js';
 import bot from './src/bot/bot.js';
 import iccRoutes from './src/routes/iccRoutes.js';
 import signalRoutes from './src/routes/signalRoutes.js';
-
+import executionRoutes from './src/routes/executionRoutes.js';
 // Import your autonomous background scanner worker here
 import './src/workers/scannerWorker.js';
 import { fetchTodayCalendar } from './src/services/news/newsService.js';
@@ -32,6 +32,7 @@ app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/webhook', webhookRoutes);
 app.use('/api/v1/icc', iccRoutes);
 app.use('/api/signals', signalRoutes);
+app.use('/api/execution', executionRoutes);
 app.get('/api/calendar/today', async (req, res) => {
   try {
     const events = await fetchTodayCalendar();
