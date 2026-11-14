@@ -188,20 +188,19 @@ export const handleCryptoWebhook = async (req, res) => {
     if (paymentStatus === 'finished' || paymentStatus === 'confirmed') {
       // Robust order_id parsing that handles UUID hyphens and underscores cleanly
       // Regex matches: HOBA-CRYPTO-(plan_key)-(userId)-(timestamp)
-      const orderMatch = orderId.match(/^HOBA-CRYPTO-(.+)-([0-9a-fA-F-]+)-(\d+)$/);
+      // Strict UUID regex matching: [8 chars]-[4 chars]-[4 chars]-[4 chars]-[12 chars]
+      const orderMatch = orderId.match(/^HOBA-CRYPTO-(.+)-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})-(\d+)$/);
 
       let planKey, userId;
 
       if (orderMatch) {
-        planKey = orderMatch[1].toLowerCase();
-        userId = orderMatch[2];
+        planKey = orderMatch[1].toLowerCase(); // e.g. "quarterly", "monthly", "annual"
+        userId = orderMatch[2];              // Full correct UUID
       } else {
-        // Fallback parsing
-        const parts = orderId.split('-');
-        planKey = parts[2]?.toLowerCase();
-        userId = parts[3];
+        console.error('[CRYPTO_WEBHOOK_ERROR]: Malformed order_id structure:', orderId);
+        return res.status(200).json({ received: true, error: 'Malformed order ID' });
       }
-
+      
       if (!userId || !planKey) {
         console.error('[CRYPTO_WEBHOOK_ERROR]: Could not resolve user or plan from order_id:', orderId);
         return res.status(200).json({ received: true, error: 'User or plan not resolved' });
