@@ -24,7 +24,13 @@ dotenv.config();
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    if (req.originalUrl.startsWith('/api/webhook/paystack')) {
+      req.rawBody = buf.toString();
+    }
+  }
+}));
 
 // Main Route Mounting
 app.use('/api/auth', authRoutes);
