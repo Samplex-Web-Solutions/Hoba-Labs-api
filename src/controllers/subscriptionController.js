@@ -133,18 +133,15 @@ export async function initializeCryptoPayment(req, res) {
       return res.status(400).json({ success: false, message: 'Invalid subscription plan' });
     }
 
-    // Strict order_id format required to parse user_id and plan_key back in the webhook:
-    // HOBA-CRYPTO-[plan_key]-[user_id]-[timestamp]
     const orderId = `HOBA-CRYPTO-${plan.plan_key.toLowerCase()}-${userId}-${Date.now()}`;
-    const amountUsd = Number(plan.amount).toFixed(2); // e.g., "10.00"
+    const amountUsd = Number(plan.amount).toFixed(2);
 
-    // 3. Call NOWPayments Invoice API
+    // 3. Call NOWPayments Invoice API (Omit pay_currency so users can choose freely on the hosted page)
     const npResponse = await axios.post(
       `${process.env.NOWPAYMENTS_API_URL}/invoice`,
       {
         price_amount: amountUsd,
         price_currency: 'usd',
-        pay_currency: '', // Leave empty to let users choose any currency on the hosted widget (as shown in your screenshot)
         ipn_callback_url: `${process.env.BACKEND_URL}/api/webhook/crypto`,
         order_id: orderId,
         order_description: `Hoba Labs Subscription: ${plan.name}`,
