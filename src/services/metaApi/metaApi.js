@@ -28,7 +28,8 @@ export async function provisionUserMetaApiAccount(userEmail, brokerLogin, broker
         platform: 'mt5',
         application: 'MetaApi',
         reliability: 'high',
-        region: 'london'
+        region: 'london',
+        magic: 897691,
       },
       {
         headers: {
