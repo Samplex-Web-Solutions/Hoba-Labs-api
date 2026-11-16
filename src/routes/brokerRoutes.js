@@ -8,7 +8,7 @@ const router = express.Router();
 // GET /api/broker/ea-stats - Fetches user EA access and live balance/equity metrics
 router.get('/ea-stats', verifyJWT, getEADashboardStats);
 
-// POST /api/broker/connect - Provisions MetaApi container and links user broker account
+// POST /api/broker/connect - Establishes TickerAll broker session and links user account
 router.post('/connect', verifyJWT, connectBrokerAccount);
 
 export default router;

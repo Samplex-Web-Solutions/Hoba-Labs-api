@@ -1,15 +1,17 @@
 // src/controllers/brokerController.js
 import { supabase } from '../config/supabase.js';
-import { provisionUserMetaApiAccount, linkSubscriberAccount } from '../services/metaApi/metaApi.js';
+import axios from 'axios';
+
+const TICKERALL_BASE_URL = 'https://api.tickerall.com';
+
 /**
  * GET /api/broker/ea-stats
- * Fetches user EA access status and real-time/cached broker account stats (Balance, Equity, Floating PnL)
+ * Fetches user EA access status and broker account stats
  */
 export async function getEADashboardStats(req, res) {
   try {
-    const userId = req.userId; // Provided by verifyJWT middleware
+    const userId = req.userId;
 
-    // 1. Check user EA access flag
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('ea_access')
@@ -34,7 +36,6 @@ export async function getEADashboardStats(req, res) {
       });
     }
 
-    // 2. Fetch linked broker account details from broker_accounts table
     const { data: account, error: accountError } = await supabase
       .from('broker_accounts')
       .select('*')
@@ -75,18 +76,17 @@ export async function getEADashboardStats(req, res) {
 
 /**
  * POST /api/broker/connect
- * Provisions MetaApi container and links it to the user's broker_accounts table
+ * Establishes a TickerAll broker session and links it to the user's account
  */
 export async function connectBrokerAccount(req, res) {
   try {
     const userId = req.userId;
-    const { login, password, server } = req.body;
+    const { login, password, server, broker = 'mt5' } = req.body;
 
     if (!login || !password || !server) {
       return res.status(400).json({ success: false, error: 'Missing required broker credentials (login, password, server).' });
     }
 
-    // Fetch user email for MetaApi account naming
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('email, client_id')
@@ -97,12 +97,35 @@ export async function connectBrokerAccount(req, res) {
       return res.status(404).json({ success: false, error: 'User profile not found.' });
     }
 
-    console.log(`[CONNECT]: Provisioning MetaApi account for user ${user.email}...`);
+    console.log(`[CONNECT]: Establishing TickerAll session for user ${user.email}...`);
 
-    // 1. Provision account container on MetaApi
-    const metaApiAccountId = await provisionUserMetaApiAccount(user.email, login, password, server);
+    // Call TickerAll API to start session
+    const response = await axios.post(
+      `${TICKERALL_BASE_URL}/v1/sessions`,
+      {
+        broker: broker.toLowerCase(),
+        server: server,
+        account: Number(login),
+        password: password,
+        terminalType: 'MOBILE'
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.TICKERALL_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
 
-    // 2. Save or update broker account record in database
+    const sessionData = response.data;
+    const tickerallAccountId = sessionData.accountId || sessionData.id;
+
+    if (!tickerallAccountId) {
+      throw new Error('TickerAll did not return a valid account ID.');
+    }
+
+    // Save or update broker account record in database
     const { data: existingAccount } = await supabase
       .from('broker_accounts')
       .select('id')
@@ -111,11 +134,11 @@ export async function connectBrokerAccount(req, res) {
 
     const brokerPayload = {
       user_id: userId,
-      broker_name: server.split('-')[0] || 'MetaTrader5',
+      broker_name: server.split('-')[0] || 'MetaTrader',
       server_name: server,
       account_login: String(login),
-      encrypted_password: password, // Note: ensure encryption matches your setup or store securely
-      metaapi_account_id: metaApiAccountId,
+      encrypted_password: password,
+      tickerall_account_id: tickerallAccountId,
       connection_status: 'CONNECTED',
       updated_at: new Date().toISOString()
     };
@@ -131,28 +154,28 @@ export async function connectBrokerAccount(req, res) {
         .insert([brokerPayload]);
     }
 
-    // Also sync to active user_broker_accounts table if your broadcast worker relies on it
+    // Sync to user_broker_accounts table for broadcast mapping
     await supabase
       .from('user_broker_accounts')
       .upsert({
         user_id: userId,
-        broker_account_id: metaApiAccountId,
+        broker_account_id: tickerallAccountId,
         is_active: true
       }, { onConflict: 'user_id' });
 
-    console.log(`[CONNECT]: Successfully linked account ${metaApiAccountId} to user ${userId}`);
+    console.log(`[CONNECT]: Successfully linked TickerAll account ${tickerallAccountId} to user ${userId}`);
 
     return res.status(200).json({
       success: true,
-      message: 'Broker account successfully connected and provisioned!',
-      metaApiAccountId
+      message: 'Broker account successfully connected via TickerAll!',
+      tickerallAccountId
     });
 
   } catch (error) {
-    console.error('[CONNECT_ERROR]:', error.message);
+    console.error('[TICKERALL_CONNECT_ERROR]:', error.response?.data || error.message);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Failed to provision broker account.'
+      error: error.response?.data?.message || error.message || 'Failed to connect broker account.'
     });
   }
 }

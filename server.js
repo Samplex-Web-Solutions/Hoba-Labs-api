@@ -9,10 +9,9 @@ import webhookRoutes from './src/routes/webhookRoutes.js';
 import iccRoutes from './src/routes/iccRoutes.js';
 import signalRoutes from './src/routes/signalRoutes.js';
 
-// EA
+// EA & Broker Routes
 import executionRoutes from './src/routes/executionRoutes.js';
 import tradeRoutes from './src/routes/tradeRoutes.js';
-import { provisionUserMetaApiAccount, linkSubscriberAccount } from './src/services/metaApi/metaApi.js';
 import brokerRoutes from './src/routes/brokerRoutes.js';
 import licenseRoutes from './src/routes/licenseRoutes.js';
 
@@ -45,6 +44,8 @@ app.use('/api/v1/icc', iccRoutes);
 app.use('/api/signals', signalRoutes);
 app.use('/api/execution', executionRoutes);
 app.use('/api/trades', tradeRoutes);
+app.use('/api/broker', brokerRoutes);
+app.use('/api/license', licenseRoutes);
 
 // Calendar Endpoint
 app.get('/api/calendar/today', async (req, res) => {
@@ -53,35 +54,6 @@ app.get('/api/calendar/today', async (req, res) => {
     res.json({ success: true, data: events });
   } catch (err) {
     res.status(500).json({ success: false, message: "Failed to fetch today's calendar" });
-  }
-});
-
-
-
-// broker Connection Provisioning Endpoint
-app.use('/api/broker', brokerRoutes);
-app.use('/api/license', licenseRoutes);
-app.post('/api/broker/connect', async (req, res) => {
-  try {
-    const { userId, email, login, password, server } = req.body;
-
-    // 1. Provision the account container on MetaApi
-    const brokerAccountId = await provisionUserMetaApiAccount(email, login, password, server);
-
-    // 2. Link the new MetaApi Account ID to the user in Supabase
-    await linkSubscriberAccount(userId, brokerAccountId);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Broker account successfully connected and provisioned!',
-      brokerAccountId
-    });
-  } catch (error) {
-    console.error('Broker connection error:', error.message);
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
   }
 });
 

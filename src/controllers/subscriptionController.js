@@ -270,7 +270,7 @@ export async function verifySubscriptionPayment(req, res) {
         .eq('reference', reference);
     }
 
-    // STRICT DECOUPLING CHECK: Only grant EA access and generate license keys if plan is EA tier[cite: 11, 17]
+    // GENERATE KEY ONLY (Do NOT update user ea_access here; require manual redemption)
     if (planKey.includes('ea')) {
       const { data: existingKey } = await supabase
         .from('license_keys')
@@ -289,11 +289,6 @@ export async function verifySubscriptionPayment(req, res) {
           expires_at: periodEnd.toISOString()
         });
       }
-
-      await supabase
-        .from('users')
-        .update({ ea_access: true })
-        .eq('id', userId);
     }
 
     await processReferralReward(userId);

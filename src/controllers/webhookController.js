@@ -148,7 +148,7 @@ export const handlePaystackWebhook = async (req, res) => {
           .eq('reference', reference);
       }
 
-      // STRICT DECOUPLING CHECK: Only generate license keys & enable EA access if plan is EA tier[cite: 12, 17]
+      // GENERATE KEY & EMAIL ONLY (Requires manual key redemption to set ea_access = true)
       if (planKey.includes('ea')) {
         const newLicenseKey = generateLicenseKey();
         const { error: keyError } = await supabase
@@ -163,19 +163,12 @@ export const handlePaystackWebhook = async (req, res) => {
 
         if (keyError) {
           console.error('[WEBHOOK_ERROR]: Failed to insert license key:', keyError.message);
-        } else {
-          await supabase
-            .from('users')
-            .update({ ea_access: true })
-            .eq('id', userId);
-
-          if (dbUser && dbUser.email) {
-            try {
-              await sendLicenseEmail(dbUser.email, dbUser.first_name, newLicenseKey, periodEnd);
-              console.log(`[LICENSE_EMAIL]: License key ${newLicenseKey} emailed to ${dbUser.email}`);
-            } catch (emailErr) {
-              console.error('[EMAIL_ERROR]: Failed to send license email:', emailErr.message);
-            }
+        } else if (dbUser && dbUser.email) {
+          try {
+            await sendLicenseEmail(dbUser.email, dbUser.first_name, newLicenseKey, periodEnd);
+            console.log(`[LICENSE_EMAIL]: License key ${newLicenseKey} emailed to ${dbUser.email}`);
+          } catch (emailErr) {
+            console.error('[EMAIL_ERROR]: Failed to send license email:', emailErr.message);
           }
         }
       } else {
@@ -315,7 +308,7 @@ export const handleCryptoWebhook = async (req, res) => {
         await supabase.from('subscription_history').update({ status: 'success' }).eq('reference', paymentId);
       }
 
-      // STRICT DECOUPLING CHECK: Only generate license keys & enable EA access if plan is EA tier[cite: 12, 17]
+      // GENERATE KEY & EMAIL ONLY (Requires manual key redemption to set ea_access = true)
       if (planKey.includes('ea')) {
         const newLicenseKey = generateLicenseKey();
         const { error: keyError } = await supabase
@@ -330,19 +323,12 @@ export const handleCryptoWebhook = async (req, res) => {
 
         if (keyError) {
           console.error('[CRYPTO_WEBHOOK_ERROR]: Failed to insert license key:', keyError.message);
-        } else {
-          await supabase
-            .from('users')
-            .update({ ea_access: true })
-            .eq('id', userId);
-
-          if (dbUser && dbUser.email) {
-            try {
-              await sendLicenseEmail(dbUser.email, dbUser.first_name, newLicenseKey, periodEnd);
-              console.log(`[CRYPTO_LICENSE_EMAIL]: License key ${newLicenseKey} emailed to ${dbUser.email}`);
-            } catch (emailErr) {
-              console.error('[CRYPTO_EMAIL_ERROR]: Failed to send license email:', emailErr.message);
-            }
+        } else if (dbUser && dbUser.email) {
+          try {
+            await sendLicenseEmail(dbUser.email, dbUser.first_name, newLicenseKey, periodEnd);
+            console.log(`[CRYPTO_LICENSE_EMAIL]: License key ${newLicenseKey} emailed to ${dbUser.email}`);
+          } catch (emailErr) {
+            console.error('[CRYPTO_EMAIL_ERROR]: Failed to send license email:', emailErr.message);
           }
         }
       } else {

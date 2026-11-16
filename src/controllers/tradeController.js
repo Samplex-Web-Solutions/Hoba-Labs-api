@@ -1,7 +1,10 @@
+// src/controllers/tradeController.js
 import { supabase } from '../config/supabase.js';
-import { getConnectedMetaApiAccount } from '../services/metaApi/metaapiService.js';
-import { calculateLotSize } from '../utils/lotSizeCalculator.js';
+import axios from 'axios';
+import crypto from 'crypto';
 import { fetchTodayCalendar } from '../services/news/newsService.js'; 
+
+const TICKERALL_BASE_URL = 'https://api.tickerall.com';
 
 /**
  * High-Impact USD News Filter using calendar data
@@ -31,17 +34,19 @@ async function isNewsBlocked() {
 }
 
 /**
- * Helper to process and execute trade for an individual user/subscriber instance
+ * Helper to process and execute trade via TickerAll for an individual active subscriber
  */
 async function executeTradeForSubscriber(subscriber, signalData) {
-  const { userId, brokerAccountId } = subscriber;
-  const { symbol, metaApiActionType, cleanType, entryPrice, stopLossPrice, takeProfitPrice, stopLossPips } = signalData;
+  const { userId, tickerallAccountId } = subscriber;
+  const { symbol, tickerAllActionType, cleanType, entryPrice, stopLossPrice, takeProfitPrice } = signalData;
+
+  const idempotencyKey = crypto.randomUUID();
 
   try {
-    // 1. Check User EA Access & Risk Configuration from database
+    // 1. Strict Validation: Check User EA Access & Active Subscription
     const { data: user, error: userError } = await supabase
       .from('users')
-      .select('ea_access, risk_percentage')
+      .select('ea_access')
       .eq('id', userId)
       .single();
 
@@ -50,49 +55,68 @@ async function executeTradeForSubscriber(subscriber, signalData) {
       return { userId, success: false, reason: 'EA access disabled' };
     }
 
-    // 2. Connect to MetaApi Cloud Instance & Get Broker Account Info
-    const { connection, brokerAcc } = await getConnectedMetaApiAccount(userId);
-    const accountInfo = await connection.getAccountInformation();
-    const currentEquity = accountInfo.equity;
+    const { data: sub, error: subError } = await supabase
+      .from('subscriptions')
+      .select('status, plan_type')
+      .eq('user_id', userId)
+      .single();
 
-    // 3. Calculate Dynamic Lot Size based on subscriber's account equity and risk profile
-    const riskPercentage = user.risk_percentage || 1.00;
-    const lotSize = calculateLotSize(currentEquity, riskPercentage, stopLossPips, symbol);
-    
-    console.log(`[TRADE_DISPATCH]: Placing ${metaApiActionType} of ${lotSize} lots on ${symbol} at entry ${entryPrice} for user ${userId}`);
+    if (subError || !sub || sub.status !== 'active') {
+      console.warn(`[SUBSCRIBER_SKIP]: Inactive subscription status for user: ${userId}`);
+      return { userId, success: false, reason: 'Inactive subscription' };
+    }
 
-    // 4. Execute Pending Limit Order on MetaApi
-    const result = await connection.createOrder(
-      symbol,
-      metaApiActionType,
-      lotSize,
-      Number(entryPrice),
-      Number(stopLossPrice),
-      takeProfitPrice ? Number(takeProfitPrice) : null,
+    const isEaPlan = sub.plan_type.includes('ea') || sub.plan_type.includes('bundle');
+    if (!isEaPlan) {
+      console.warn(`[SUBSCRIBER_SKIP]: Plan does not include EA execution for user: ${userId}`);
+      return { userId, success: false, reason: 'Non-EA subscription plan' };
+    }
+
+    console.log(`[TRADE_DISPATCH]: Placing ${tickerAllActionType} on ${symbol} for TickerAll account ${tickerallAccountId} (User: ${userId})`);
+
+    // 2. Execute Order via TickerAll REST API
+    const response = await axios.post(
+      `${TICKERALL_BASE_URL}/v1/accounts/${tickerallAccountId}/orders`,
       {
-        comment: 'Hoba Labs Master Broadcast EA',
-        clientId: `hoba_${Date.now()}_${userId.substring(0, 6)}`
+        symbol: symbol,
+        type: tickerAllActionType,
+        volume: 0.10, // Adjust dynamic lot calculation if needed
+        price: Number(entryPrice),
+        stopLoss: Number(stopLossPrice),
+        takeProfit: takeProfitPrice ? Number(takeProfitPrice) : undefined
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${process.env.TICKERALL_API_KEY}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey
+        },
+        timeout: 15000
       }
     );
 
-    // 5. Log Trade Success to Supabase
+    const orderResult = response.data;
+    const orderId = orderResult.orderId || orderResult.id || idempotencyKey;
+
+    // 3. Log Trade Success to Supabase
     await supabase.from('trade_logs').insert({
       user_id: userId,
-      broker_account_id: brokerAcc.id || brokerAccountId,
+      broker_account_id: tickerallAccountId,
       symbol,
       order_type: cleanType,
-      lot_size: lotSize,
+      lot_size: 0.10,
       entry_price: Number(entryPrice),
       stop_loss: Number(stopLossPrice),
       take_profit: takeProfitPrice ? Number(takeProfitPrice) : 0,
       status: 'PENDING',
-      metaapi_order_id: result.orderId || result.stringCode
+      metaapi_order_id: String(orderId)
     });
 
-    return { userId, success: true, orderId: result.orderId || result.stringCode };
+    return { userId, success: true, orderId };
 
   } catch (err) {
-    console.error(`[SUBSCRIBER_EXECUTION_ERROR] for user ${userId}:`, err.message);
+    const errorMsg = err.response?.data?.message || err.message;
+    console.error(`[SUBSCRIBER_EXECUTION_ERROR] for user ${userId}:`, errorMsg);
     
     // Log failure state
     await supabase.from('trade_logs').insert({
@@ -101,20 +125,20 @@ async function executeTradeForSubscriber(subscriber, signalData) {
       order_type: cleanType,
       lot_size: 0,
       status: 'FAILED',
-      error_message: err.message
+      error_message: errorMsg
     });
 
-    return { userId, success: false, error: err.message };
+    return { userId, success: false, error: errorMsg };
   }
 }
 
 /**
  * POST /api/trades/broadcast
- * Receives Master EA signals, validates admin secret, checks news, and fans out execution to all subscribers.
+ * Receives Local PC EA signals, validates admin secret, checks news, and fans out execution to active subscribers only.
  */
 export async function handleMasterBroadcast(req, res) {
   try {
-    const { adminSecret, symbol = 'XAUUSD', orderType, stopLossPips, entryPrice, stopLossPrice, takeProfitPrice } = req.body;
+    const { adminSecret, symbol = 'XAUUSD', orderType, entryPrice, stopLossPrice, takeProfitPrice } = req.body;
 
     // 1. Authenticate the Master EA broadcast request
     if (!adminSecret || adminSecret !== process.env.ADMIN_SECRET_KEY) {
@@ -126,7 +150,7 @@ export async function handleMasterBroadcast(req, res) {
       return res.status(400).json({ error: 'Missing required parameters: orderType, entryPrice, stopLossPrice' });
     }
 
-    // 2. Enforce High-Impact News Filter globally for the broadcast
+    // 2. Enforce High-Impact News Filter globally
     const newsBlocked = await isNewsBlocked();
     if (newsBlocked) {
       console.log(`[BROADCAST_BLOCKED]: High-impact USD news buffer active.`);
@@ -136,18 +160,18 @@ export async function handleMasterBroadcast(req, res) {
       });
     }
 
-    // 3. Map Order Type for Limit Orders
-    let metaApiActionType;
+    // 3. Map Order Type for TickerAll format
+    let tickerAllActionType;
     const cleanType = orderType.toUpperCase();
-    if (cleanType === 'BUY_LIMIT') metaApiActionType = 'ORDER_TYPE_BUY_LIMIT';
-    else if (cleanType === 'SELL_LIMIT') metaApiActionType = 'ORDER_TYPE_SELL_LIMIT';
-    else if (cleanType === 'BUY_STOP') metaApiActionType = 'ORDER_TYPE_BUY_STOP';
-    else if (cleanType === 'SELL_STOP') metaApiActionType = 'ORDER_TYPE_SELL_STOP';
+    if (cleanType === 'BUY_LIMIT') tickerAllActionType = 'BUY_LIMIT';
+    else if (cleanType === 'SELL_LIMIT') tickerAllActionType = 'SELL_LIMIT';
+    else if (cleanType === 'BUY_STOP') tickerAllActionType = 'BUY_STOP';
+    else if (cleanType === 'SELL_STOP') tickerAllActionType = 'SELL_STOP';
     else {
       return res.status(400).json({ error: 'Invalid orderType. Must be BUY_LIMIT, SELL_LIMIT, BUY_STOP, or SELL_STOP.' });
     }
 
-    // 4. Fetch all active user accounts / subscribers from Supabase
+    // 4. Fetch all active connected broker accounts from Supabase
     const { data: subscribers, error: subError } = await supabase
       .from('user_broker_accounts')
       .select('user_id, broker_account_id')
@@ -165,38 +189,33 @@ export async function handleMasterBroadcast(req, res) {
       });
     }
 
-    console.log(`[BROADCAST_FANOUT]: Dispatches incoming signal to ${subscribers.length} active subscriber accounts...`);
+    console.log(`[BROADCAST_FANOUT]: Dispatches incoming signal to ${subscribers.length} connected subscriber accounts...`);
 
-    // Normalize subscriber object keys to match helper expectations
     const formattedSubscribers = subscribers.map(sub => ({
       userId: sub.user_id,
-      brokerAccountId: sub.broker_account_id
+      tickerallAccountId: sub.broker_account_id
     }));
 
     const signalData = {
       symbol,
-      metaApiActionType,
+      tickerAllActionType,
       cleanType,
       entryPrice,
       stopLossPrice,
-      takeProfitPrice,
-      stopLossPips
+      takeProfitPrice
     };
 
-    // 5. Fan out trade execution asynchronously across all subscribers
-    // We map promises so all requests fire concurrently without blocking the HTTP response
+    // 5. Fan out trade execution asynchronously across all eligible subscribers
     const executionPromises = formattedSubscribers.map(sub => executeTradeForSubscriber(sub, signalData));
     
-    // Await background completion or let it process asynchronously
     Promise.all(executionPromises).then(results => {
       const successes = results.filter(r => r.success).length;
       console.log(`[BROADCAST_COMPLETE]: Successfully executed trade for ${successes}/${results.length} subscribers.`);
     });
 
-    // Immediate acknowledgment back to the Master EA running on your laptop
     return res.status(200).json({
       success: true,
-      message: `Master broadcast received and fanned out to ${subscribers.length} active accounts.`,
+      message: `Master broadcast received and fanned out to ${subscribers.length} accounts.`,
       activeSubscribersCount: subscribers.length
     });
 
