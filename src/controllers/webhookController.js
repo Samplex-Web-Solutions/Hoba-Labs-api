@@ -1,10 +1,12 @@
+// src/controllers/webhookController.js
 import { supabase } from '../config/supabase.js';
 import { processReferralReward } from '../utils/processReward.js';
+import { generateLicenseKey } from '../utils/KeyGenerator.js';
+import { sendLicenseEmail } from '../services/email/emailService.js';
 import crypto from 'crypto';
 
 export const handlePaystackWebhook = async (req, res) => {
   try {
-    // Use rawBody buffer if available for exact cryptographic match, fallback to JSON.stringify
     const payloadString = req.rawBody || JSON.stringify(req.body);
     
     const hash = crypto
@@ -25,7 +27,6 @@ export const handlePaystackWebhook = async (req, res) => {
       const metadata = transactionData.metadata;
       const customer = transactionData.customer;
 
-      // 1. Idempotency Check: If history entry with this reference already exists and is success, skip processing
       const { data: existingHistory } = await supabase
         .from('subscription_history')
         .select('id, status')
@@ -36,7 +37,6 @@ export const handlePaystackWebhook = async (req, res) => {
         return res.status(200).json({ received: true, note: 'Already processed' });
       }
 
-      // 2. Resolve plan_key safely from metadata or reference fallback
       let planKey = metadata?.plan_key?.toLowerCase();
       if (!planKey) {
         const refParts = reference.split('-');
@@ -57,23 +57,37 @@ export const handlePaystackWebhook = async (req, res) => {
       }
 
       let userId = metadata?.user_id;
+      let dbUser = null;
 
       if (!userId && customer?.email) {
         const { data: userByEmail } = await supabase
           .from('users')
-          .select('id')
+          .select('id, email, first_name')
           .eq('email', customer.email.toLowerCase().trim())
           .single();
-        if (userByEmail) userId = userByEmail.id;
+        if (userByEmail) {
+          userId = userByEmail.id;
+          dbUser = userByEmail;
+        }
+      } else if (userId) {
+        const { data: userById } = await supabase
+          .from('users')
+          .select('id, email, first_name')
+          .eq('id', userId)
+          .single();
+        if (userById) dbUser = userById;
       }
 
       if (!userId && customer?.phone) {
         const { data: userByPhone } = await supabase
           .from('users')
-          .select('id')
+          .select('id, email, first_name')
           .eq('phone', customer.phone.trim())
           .single();
-        if (userByPhone) userId = userByPhone.id;
+        if (userByPhone) {
+          userId = userByPhone.id;
+          dbUser = userByPhone;
+        }
       }
 
       if (!userId) {
@@ -87,7 +101,6 @@ export const handlePaystackWebhook = async (req, res) => {
 
       const amountPaidUSD = transactionData.amount / 100;
 
-      // 3. Upsert subscription record
       const { data: existingSub } = await supabase
         .from('subscriptions')
         .select('id, trial_ends_at')
@@ -115,7 +128,6 @@ export const handlePaystackWebhook = async (req, res) => {
           .insert([subPayload]);
       }
 
-      // 4. Record or update history atomically
       if (!existingHistory) {
         await supabase
           .from('subscription_history')
@@ -136,10 +148,43 @@ export const handlePaystackWebhook = async (req, res) => {
           .eq('reference', reference);
       }
 
-      // 5. Process referral reward safely once
+      // STRICT DECOUPLING CHECK: Only generate license keys & enable EA access if plan is EA tier[cite: 12, 17]
+      if (planKey.includes('ea')) {
+        const newLicenseKey = generateLicenseKey();
+        const { error: keyError } = await supabase
+          .from('license_keys')
+          .insert({
+            user_id: userId,
+            key_code: newLicenseKey,
+            status: 'ACTIVE',
+            plan_type: planKey,
+            expires_at: periodEnd.toISOString()
+          });
+
+        if (keyError) {
+          console.error('[WEBHOOK_ERROR]: Failed to insert license key:', keyError.message);
+        } else {
+          await supabase
+            .from('users')
+            .update({ ea_access: true })
+            .eq('id', userId);
+
+          if (dbUser && dbUser.email) {
+            try {
+              await sendLicenseEmail(dbUser.email, dbUser.first_name, newLicenseKey, periodEnd);
+              console.log(`[LICENSE_EMAIL]: License key ${newLicenseKey} emailed to ${dbUser.email}`);
+            } catch (emailErr) {
+              console.error('[EMAIL_ERROR]: Failed to send license email:', emailErr.message);
+            }
+          }
+        }
+      } else {
+        console.log(`[SUBSCRIPTION_SUCCESS]: User ${userId} subscribed to signal plan (${planKey}). EA access remains locked.`);
+      }
+
       await processReferralReward(userId);
 
-      console.log(`[PAYMENT_SUCCESS]: User ${userId} upgraded to ${plan.name} (${planKey}) via Webhook.`);
+      console.log(`[PAYMENT_SUCCESS]: User ${userId} upgraded to ${plan.name} (${planKey}) via Paystack Webhook.`);
     }
 
     return res.status(200).json({ received: true });
@@ -159,7 +204,6 @@ export const handleCryptoWebhook = async (req, res) => {
       return res.status(401).json({ error: 'Missing NOWPayments signature header' });
     }
 
-    // 1. Sort incoming JSON payload keys alphabetically for HMAC calculation
     const payloadObject = req.body;
     const sortedData = Object.keys(payloadObject)
       .sort()
@@ -168,34 +212,27 @@ export const handleCryptoWebhook = async (req, res) => {
         return obj;
       }, {});
 
-    // 2. Compute HMAC-SHA512 hash
     const hmac = crypto.createHmac('sha512', ipnSecret);
     hmac.update(JSON.stringify(sortedData));
     const calculatedSig = hmac.digest('hex');
 
     if (receivedSig !== calculatedSig) {
       console.error('[SECURITY_WARNING]: Invalid NOWPayments signature mismatch.');
-      console.error(`Received: ${receivedSig} | Calculated: ${calculatedSig}`);
       return res.status(401).json({ error: 'Unauthorized signature' });
     }
 
     const event = req.body;
-    const paymentStatus = event.payment_status; // 'finished' or 'confirmed'
-    const orderId = event.order_id; // Format: HOBA-CRYPTO-[PLAN_KEY]-[USER_ID]-[TIMESTAMP]
-
-    console.log(`[CRYPTO_WEBHOOK_RECEIVED]: Payment ID ${event.payment_id} | Status: ${paymentStatus}`);
+    const paymentStatus = event.payment_status; 
+    const orderId = event.order_id; 
 
     if (paymentStatus === 'finished' || paymentStatus === 'confirmed') {
-      // Robust order_id parsing that handles UUID hyphens and underscores cleanly
-      // Regex matches: HOBA-CRYPTO-(plan_key)-(userId)-(timestamp)
-      // Strict UUID regex matching: [8 chars]-[4 chars]-[4 chars]-[4 chars]-[12 chars]
       const orderMatch = orderId.match(/^HOBA-CRYPTO-(.+)-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})-(\d+)$/);
 
       let planKey, userId;
 
       if (orderMatch) {
-        planKey = orderMatch[1].toLowerCase(); // e.g. "quarterly", "monthly", "annual"
-        userId = orderMatch[2];              // Full correct UUID
+        planKey = orderMatch[1].toLowerCase();
+        userId = orderMatch[2];
       } else {
         console.error('[CRYPTO_WEBHOOK_ERROR]: Malformed order_id structure:', orderId);
         return res.status(200).json({ received: true, error: 'Malformed order ID' });
@@ -208,7 +245,6 @@ export const handleCryptoWebhook = async (req, res) => {
 
       const paymentId = String(event.payment_id);
 
-      // Idempotency check: verify if history log already processed this payment id
       const { data: existingHistory } = await supabase
         .from('subscription_history')
         .select('id, status')
@@ -216,11 +252,15 @@ export const handleCryptoWebhook = async (req, res) => {
         .single();
 
       if (existingHistory && existingHistory.status === 'success') {
-        console.log(`[CRYPTO_WEBHOOK]: Transaction ${paymentId} already processed.`);
         return res.status(200).json({ received: true, note: 'Already processed' });
       }
 
-      // Fetch plan configuration
+      const { data: dbUser } = await supabase
+        .from('users')
+        .select('id, email, first_name')
+        .eq('id', userId)
+        .single();
+
       const { data: plan, error: planError } = await supabase
         .from('subscription_plans')
         .select('*')
@@ -238,7 +278,6 @@ export const handleCryptoWebhook = async (req, res) => {
 
       const amountPaidUSD = Number(event.price_amount || plan.amount);
 
-      // Upsert subscription record
       const { data: existingSub } = await supabase
         .from('subscriptions')
         .select('id, trial_ends_at')
@@ -256,16 +295,13 @@ export const handleCryptoWebhook = async (req, res) => {
       };
 
       if (existingSub) {
-        const { error: subErr } = await supabase.from('subscriptions').update(subPayload).eq('user_id', userId);
-        if (subErr) console.error('[SUPABASE_SUB_UPDATE_ERROR]:', subErr);
+        await supabase.from('subscriptions').update(subPayload).eq('user_id', userId);
       } else {
-        const { error: subErr } = await supabase.from('subscriptions').insert([subPayload]);
-        if (subErr) console.error('[SUPABASE_SUB_INSERT_ERROR]:', subErr);
+        await supabase.from('subscriptions').insert([subPayload]);
       }
 
-      // Record successful transaction history
       if (!existingHistory) {
-        const { error: histErr } = await supabase.from('subscription_history').insert([{
+        await supabase.from('subscription_history').insert([{
           user_id: userId,
           plan_key: planKey,
           amount: amountPaidUSD,
@@ -275,9 +311,42 @@ export const handleCryptoWebhook = async (req, res) => {
           period_start: periodStart.toISOString(),
           period_end: periodEnd.toISOString()
         }]);
-        if (histErr) console.error('[SUPABASE_HIST_INSERT_ERROR]:', histErr);
       } else {
         await supabase.from('subscription_history').update({ status: 'success' }).eq('reference', paymentId);
+      }
+
+      // STRICT DECOUPLING CHECK: Only generate license keys & enable EA access if plan is EA tier[cite: 12, 17]
+      if (planKey.includes('ea')) {
+        const newLicenseKey = generateLicenseKey();
+        const { error: keyError } = await supabase
+          .from('license_keys')
+          .insert({
+            user_id: userId,
+            key_code: newLicenseKey,
+            status: 'ACTIVE',
+            plan_type: planKey,
+            expires_at: periodEnd.toISOString()
+          });
+
+        if (keyError) {
+          console.error('[CRYPTO_WEBHOOK_ERROR]: Failed to insert license key:', keyError.message);
+        } else {
+          await supabase
+            .from('users')
+            .update({ ea_access: true })
+            .eq('id', userId);
+
+          if (dbUser && dbUser.email) {
+            try {
+              await sendLicenseEmail(dbUser.email, dbUser.first_name, newLicenseKey, periodEnd);
+              console.log(`[CRYPTO_LICENSE_EMAIL]: License key ${newLicenseKey} emailed to ${dbUser.email}`);
+            } catch (emailErr) {
+              console.error('[CRYPTO_EMAIL_ERROR]: Failed to send license email:', emailErr.message);
+            }
+          }
+        }
+      } else {
+        console.log(`[CRYPTO_SUBSCRIPTION_SUCCESS]: User ${userId} subscribed to signal plan (${planKey}). EA access remains locked.`);
       }
 
       await processReferralReward(userId);

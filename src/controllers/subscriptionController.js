@@ -1,5 +1,7 @@
+// src/controllers/subscriptionController.js
 import { supabase } from '../config/supabase.js';
 import { processReferralReward } from '../utils/processReward.js';
+import { generateLicenseKey } from '../utils/KeyGenerator.js';
 import axios from 'axios';
 
 export async function getPlansAndConfig(req, res) {
@@ -14,7 +16,7 @@ export async function getPlansAndConfig(req, res) {
 
     if (plansError || settingsError) throw new Error('Database fetch error');
 
-    const exchangeRateSetting = settings.find(s => s.key === 'naira_exchange_rate');
+    const exchangeRateSetting = settings?.find(s => s.key === 'naira_exchange_rate');
     const exchangeRate = exchangeRateSetting ? Number(exchangeRateSetting.value) : 1500;
 
     const formattedPlans = plans.map(plan => ({
@@ -72,7 +74,6 @@ export async function initializeSubscriptionPayment(req, res) {
     const totalNaira = Number(plan.amount) * exchangeRate;
     const amountInKobo = Math.round(totalNaira * 100);
 
-    // Dynamic reference containing plan_key e.g., HOBA-EA_MONTHLY-1776... or HOBA-SIGNAL_MONTHLY-...
     const paystackResponse = await axios.post(
       'https://api.paystack.co/transaction/initialize',
       {
@@ -111,7 +112,6 @@ export async function initializeCryptoPayment(req, res) {
     const { plan_key } = req.body;
     const userId = req.userId;
 
-    // 1. Fetch user details for logging or reference tracking
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('email, phone, id')
@@ -122,7 +122,6 @@ export async function initializeCryptoPayment(req, res) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // 2. Fetch the selected subscription plan from database
     const { data: plan, error: planError } = await supabase
       .from('subscription_plans')
       .select('*')
@@ -136,7 +135,6 @@ export async function initializeCryptoPayment(req, res) {
     const orderId = `HOBA-CRYPTO-${plan.plan_key.toLowerCase()}-${userId}-${Date.now()}`;
     const amountUsd = Number(plan.amount).toFixed(2);
 
-    // 3. Call NOWPayments Invoice API (Omit pay_currency so users can choose freely on the hosted page)
     const npResponse = await axios.post(
       `${process.env.NOWPAYMENTS_API_URL}/invoice`,
       {
@@ -173,7 +171,6 @@ export async function verifySubscriptionPayment(req, res) {
     const { reference } = req.params;
     const userId = req.userId;
 
-    // 1. Check if history already marked successful (prevents redundant processing if webhook beat it)
     const { data: existingHistory } = await supabase
       .from('subscription_history')
       .select('*')
@@ -271,6 +268,32 @@ export async function verifySubscriptionPayment(req, res) {
         .from('subscription_history')
         .update({ status: 'success' })
         .eq('reference', reference);
+    }
+
+    // STRICT DECOUPLING CHECK: Only grant EA access and generate license keys if plan is EA tier[cite: 11, 17]
+    if (planKey.includes('ea')) {
+      const { data: existingKey } = await supabase
+        .from('license_keys')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('status', 'ACTIVE')
+        .single();
+
+      if (!existingKey) {
+        const newLicenseKey = generateLicenseKey();
+        await supabase.from('license_keys').insert({
+          user_id: userId,
+          key_code: newLicenseKey,
+          status: 'ACTIVE',
+          plan_type: planKey,
+          expires_at: periodEnd.toISOString()
+        });
+      }
+
+      await supabase
+        .from('users')
+        .update({ ea_access: true })
+        .eq('id', userId);
     }
 
     await processReferralReward(userId);

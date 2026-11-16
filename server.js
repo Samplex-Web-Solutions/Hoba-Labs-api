@@ -1,23 +1,28 @@
 import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
+
+// Route Imports
 import authRoutes from './src/routes/authRoutes.js';
 import subscriptionRoutes from './src/routes/subscriptionRoutes.js';
 import webhookRoutes from './src/routes/webhookRoutes.js';
-import bot from './src/bot/bot.js';
 import iccRoutes from './src/routes/iccRoutes.js';
 import signalRoutes from './src/routes/signalRoutes.js';
+
+// EA
 import executionRoutes from './src/routes/executionRoutes.js';
-// Import your autonomous background scanner worker here
-import './src/workers/scannerWorker.js';
+import tradeRoutes from './src/routes/tradeRoutes.js';
+import { provisionUserMetaApiAccount, linkSubscriberAccount } from './src/services/metaApi/metaApi.js';
+import brokerRoutes from './src/routes/brokerRoutes.js';
+import licenseRoutes from './src/routes/licenseRoutes.js';
+
+// Telegram & Services Imports
+import bot, { sendDirectTelegramMessage } from './src/bot/bot.js';
 import { fetchTodayCalendar } from './src/services/news/newsService.js';
 import { monitorOpenTrades } from './src/services/monitor/tradeMonitorService.js';
-import { sendDirectTelegramMessage } from './src/bot/bot.js';
 
-
-
-
-
+// Autonomous Scanner Worker Initializer
+import './src/workers/scannerWorker.js';
 
 dotenv.config();
 
@@ -39,16 +44,48 @@ app.use('/api/webhook', webhookRoutes);
 app.use('/api/v1/icc', iccRoutes);
 app.use('/api/signals', signalRoutes);
 app.use('/api/execution', executionRoutes);
+app.use('/api/trades', tradeRoutes);
+
+// Calendar Endpoint
 app.get('/api/calendar/today', async (req, res) => {
   try {
     const events = await fetchTodayCalendar();
     res.json({ success: true, data: events });
   } catch (err) {
-    res.status(500).json({ success: false, message: 'Failed to fetch today\'s calendar' });
+    res.status(500).json({ success: false, message: "Failed to fetch today's calendar" });
   }
 });
 
 
+
+// broker Connection Provisioning Endpoint
+app.use('/api/broker', brokerRoutes);
+app.use('/api/license', licenseRoutes);
+app.post('/api/broker/connect', async (req, res) => {
+  try {
+    const { userId, email, login, password, server } = req.body;
+
+    // 1. Provision the account container on MetaApi
+    const brokerAccountId = await provisionUserMetaApiAccount(email, login, password, server);
+
+    // 2. Link the new MetaApi Account ID to the user in Supabase
+    await linkSubscriberAccount(userId, brokerAccountId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Broker account successfully connected and provisioned!',
+      brokerAccountId
+    });
+  } catch (error) {
+    console.error('Broker connection error:', error.message);
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Telegram Broadcast Endpoint
 app.post('/api/telegram/broadcast', async (req, res) => {
   const internalSecret = req.headers['x-internal-secret'];
   if (internalSecret !== process.env.INTERNAL_SERVICE_SECRET) {
@@ -64,10 +101,12 @@ app.post('/api/telegram/broadcast', async (req, res) => {
   res.json({ success: sent });
 });
 
+// Health Check Root Endpoint
 app.get('/', (req, res) => {
-    res.status(200).json({ status: 'online', service: 'Hoba Labs Backend API' });
+  res.status(200).json({ status: 'online', service: 'Hoba Labs Backend API' });
 });
 
+// Trade Lifecycle Monitor (Interval: 30 seconds)
 setInterval(() => {
   monitorOpenTrades();
 }, 30000);
