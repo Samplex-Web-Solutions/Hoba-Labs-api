@@ -155,15 +155,43 @@ export async function connectBrokerAccount(req, res) {
       updated_at: new Date().toISOString()
     };
 
-    // Save or update broker account record with explicit error checking
-    const { error: upsertError } = await supabase
+    // Check if an account already exists for this user
+    const { data: existingAccount } = await supabase
       .from('broker_accounts')
-      .upsert(brokerPayload, { onConflict: 'user_id' });
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-    if (upsertError) {
-      console.error('[SUPABASE_UPSERT_ERROR]:', upsertError);
-      throw new Error(`Database save failed: ${upsertError.message}`);
+    let dbError = null;
+
+    if (existingAccount) {
+      // Update existing record
+      const { error } = await supabase
+        .from('broker_accounts')
+        .update(brokerPayload)
+        .eq('user_id', userId);
+      dbError = error;
+    } else {
+      // Insert new record
+      const { error } = await supabase
+        .from('broker_accounts')
+        .insert([brokerPayload]);
+      dbError = error;
     }
+
+    if (dbError) {
+      console.error('[SUPABASE_SAVE_ERROR]:', dbError);
+      throw new Error(`Database save failed: ${dbError.message}`);
+    }
+
+    // Sync to user_broker_accounts table for broadcast mapping
+    await supabase
+      .from('user_broker_accounts')
+      .upsert({
+        user_id: userId,
+        broker_account_id: tickerallAccountId,
+        is_active: true
+      }, { onConflict: 'user_id' });
 
     console.log(`[CONNECT]: Successfully linked TickerAll account ${tickerallAccountId} to user ${userId}`);
 
