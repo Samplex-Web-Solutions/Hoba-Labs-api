@@ -25,7 +25,6 @@ export async function getEADashboardStats(req, res) {
 
     const hasEaAccess = user.ea_access || false;
 
-    // If EA access is locked or disabled, return default response
     if (!hasEaAccess) {
       return res.status(200).json({
         success: true,
@@ -79,8 +78,8 @@ export async function getEADashboardStats(req, res) {
       success: true,
       hasEaAccess: true,
       stats: {
-        balance: liveMetrics.balance || 0,
-        equity: liveMetrics.equity || 0,
+        balance: liveMetrics.balance || account.balance || 0,
+        equity: liveMetrics.equity || account.equity || 0,
         floating_pnl: liveMetrics.profit || liveMetrics.floating_pnl || 0,
         connection_status: account.connection_status || 'CONNECTED',
       },
@@ -145,13 +144,6 @@ export async function connectBrokerAccount(req, res) {
       throw new Error('TickerAll did not return a valid account ID.');
     }
 
-    // Save or update broker account record in database
-    const { data: existingAccount } = await supabase
-      .from('broker_accounts')
-      .select('id')
-      .eq('user_id', userId)
-      .single();
-
     const brokerPayload = {
       user_id: userId,
       broker_name: server.split('-')[0] || 'MetaTrader',
@@ -163,25 +155,15 @@ export async function connectBrokerAccount(req, res) {
       updated_at: new Date().toISOString()
     };
 
-    if (existingAccount) {
-      await supabase
-        .from('broker_accounts')
-        .update(brokerPayload)
-        .eq('user_id', userId);
-    } else {
-      await supabase
-        .from('broker_accounts')
-        .insert([brokerPayload]);
-    }
+    // Save or update broker account record with explicit error checking
+    const { error: upsertError } = await supabase
+      .from('broker_accounts')
+      .upsert(brokerPayload, { onConflict: 'user_id' });
 
-    // Sync to user_broker_accounts table for broadcast mapping
-    await supabase
-      .from('user_broker_accounts')
-      .upsert({
-        user_id: userId,
-        broker_account_id: tickerallAccountId,
-        is_active: true
-      }, { onConflict: 'user_id' });
+    if (upsertError) {
+      console.error('[SUPABASE_UPSERT_ERROR]:', upsertError);
+      throw new Error(`Database save failed: ${upsertError.message}`);
+    }
 
     console.log(`[CONNECT]: Successfully linked TickerAll account ${tickerallAccountId} to user ${userId}`);
 
