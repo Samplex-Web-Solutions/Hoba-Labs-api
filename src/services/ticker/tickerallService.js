@@ -4,7 +4,6 @@ import { createClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import crypto from 'crypto';
 
-// Initialize Supabase client
 const supabase = createClient(
   process.env.SUPABASE_URL, 
   process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -26,13 +25,10 @@ const apiClient = axios.create({
   timeout: 30000
 });
 
-/**
- * Connect/Provision a broker account session on TickerAll
- */
 export async function startBrokerSession({ broker, server, account, password }) {
   try {
     const response = await apiClient.post('/v1/sessions', {
-      broker: broker || 'mt5', // 'mt4' or 'mt5'
+      broker: broker || 'mt5',
       server: server,
       account: Number(account),
       password: password,
@@ -49,8 +45,31 @@ export async function startBrokerSession({ broker, server, account, password }) 
 }
 
 /**
- * Execute an order on a TickerAll account with idempotency protection
+ * Fetch live account metrics (Balance, Equity, Floating Profit) from TickerAll
  */
+export async function getTickerAllAccountInformation(accountId) {
+  try {
+    const response = await apiClient.get(`/v1/accounts/${accountId}`);
+    return response.data;
+  } catch (err) {
+    console.error(`[TICKERALL_INFO_ERROR] Account ${accountId}:`, err.response?.data || err.message);
+    return null;
+  }
+}
+
+/**
+ * Fetch active open positions for an account from TickerAll
+ */
+export async function getTickerAllOpenPositions(accountId) {
+  try {
+    const response = await apiClient.get(`/v1/accounts/${accountId}/positions`);
+    return response.data || [];
+  } catch (err) {
+    console.error(`[TICKERALL_POSITIONS_ERROR] Account ${accountId}:`, err.response?.data || err.message);
+    return [];
+  }
+}
+
 export async function executeTickerAllOrder(accountId, orderDetails) {
   const idempotencyKey = crypto.randomUUID();
 
@@ -81,9 +100,6 @@ export async function executeTickerAllOrder(accountId, orderDetails) {
   }
 }
 
-/**
- * Link or upsert subscriber account mapping in Supabase
- */
 export async function linkSubscriberAccount(userId, brokerAccountId) {
   const { error } = await supabase
     .from('user_broker_accounts')
