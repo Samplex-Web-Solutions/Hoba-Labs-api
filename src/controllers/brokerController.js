@@ -179,3 +179,40 @@ export async function connectBrokerAccount(req, res) {
     });
   }
 }
+
+export async function searchBrokerServers(req, res) {
+  try {
+    const { query, platform } = req.query;
+
+    if (!query || query.trim().length < 2) {
+      return res.status(200).json({ success: true, servers: [] });
+    }
+
+    const searchTerm = query.trim();
+
+    // Query Supabase for matching company names or exact server strings
+    let dbQuery = supabase
+      .from('broker_servers')
+      .select('company_name, server_name, platform, type')
+      .or(`company_name.ilike.%${searchTerm}%,server_name.ilike.%${searchTerm}%`)
+      .order('type', { ascending: true }) // Put prop firms / main servers first
+      .limit(15);
+
+    if (platform) {
+      dbQuery = dbQuery.eq('platform', platform.toLowerCase());
+    }
+
+    const { data: servers, error } = await dbQuery;
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      success: true,
+      query: searchTerm,
+      servers: servers || []
+    });
+  } catch (err) {
+    console.error('[BROKER_SERVER_SEARCH_ERROR]:', err.message);
+    return res.status(500).json({ success: false, error: 'Failed to search broker servers' });
+  }
+}
