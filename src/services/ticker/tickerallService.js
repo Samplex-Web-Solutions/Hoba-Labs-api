@@ -47,9 +47,13 @@ export async function startBrokerSession({ broker, server, account, password }) 
 /**
  * Fetch live account metrics (Balance, Equity, Floating Profit) from TickerAll
  */
+/**
+ * Fetch live account metrics (Balance, Equity, Floating Profit) from TickerAll
+ */
 export async function getTickerAllAccountInformation(accountId) {
   try {
     const response = await apiClient.get(`/v1/accounts/${accountId}`);
+    console.log('[TICKERALL_ACCOUNT_INFO_RAW]:', response.data);
     return response.data;
   } catch (err) {
     console.error(`[TICKERALL_INFO_ERROR] Account ${accountId}:`, err.response?.data || err.message);
@@ -63,7 +67,9 @@ export async function getTickerAllAccountInformation(accountId) {
 export async function getTickerAllOpenPositions(accountId) {
   try {
     const response = await apiClient.get(`/v1/accounts/${accountId}/positions`);
-    return response.data || [];
+    console.log('[TICKERALL_POSITIONS_RAW]:', response.data);
+    // Ensure we always return an array whether TickerAll wraps it or returns it directly
+    return response.data.positions || response.data || [];
   } catch (err) {
     console.error(`[TICKERALL_POSITIONS_ERROR] Account ${accountId}:`, err.response?.data || err.message);
     return [];

@@ -58,16 +58,24 @@ export async function getEADashboardStats(req, res) {
 
     if (account.tickerall_account_id) {
       try {
-        const [accountInfo, positions] = await Promise.all([
+        const [accountInfo, positionsData] = await Promise.all([
           getTickerAllAccountInformation(account.tickerall_account_id),
           getTickerAllOpenPositions(account.tickerall_account_id)
         ]);
 
         if (accountInfo) {
-          liveMetrics = accountInfo;
+          const info = accountInfo.data || accountInfo;
+          liveMetrics = {
+            balance: info.balance ?? info.Balance ?? 0,
+            equity: info.equity ?? info.Equity ?? 0,
+            profit: info.profit ?? info.Profit ?? info.floating_pnl ?? info.FloatingPnl ?? 0
+          };
         }
-        if (positions) {
-          activePositions = positions;
+
+        if (positionsData) {
+          activePositions = Array.isArray(positionsData) 
+            ? positionsData 
+            : (positionsData.positions || []);
         }
       } catch (tickerErr) {
         console.warn('[TICKERALL_SYNC_WARN]: Live sync failed, fallback to zero metrics');
@@ -80,7 +88,7 @@ export async function getEADashboardStats(req, res) {
       stats: {
         balance: liveMetrics.balance || account.balance || 0,
         equity: liveMetrics.equity || account.equity || 0,
-        floating_pnl: liveMetrics.profit || liveMetrics.floating_pnl || 0,
+        floating_pnl: liveMetrics.profit || 0,
         connection_status: account.connection_status || 'CONNECTED',
       },
       account: {
