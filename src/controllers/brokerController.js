@@ -65,10 +65,13 @@ export async function getEADashboardStats(req, res) {
 
         if (accountInfo) {
           const info = accountInfo.data || accountInfo;
+          // Extract balance and equity from TickerAll's nested 'account' object
+          const accDetails = info.account || {}; 
+          
           liveMetrics = {
-            balance: info.balance ?? info.Balance ?? 0,
-            equity: info.equity ?? info.Equity ?? 0,
-            profit: info.profit ?? info.Profit ?? info.floating_pnl ?? info.FloatingPnl ?? 0
+            balance: accDetails.balance ?? info.balance ?? 0,
+            equity: accDetails.equity ?? info.equity ?? 0,
+            profit: accDetails.profit ?? accDetails.floating_pnl ?? info.profit ?? info.floating_pnl ?? 0
           };
         }
 
