@@ -4,7 +4,7 @@ import axios from 'axios';
 import { 
   getTickerAllAccountInformation, 
   getTickerAllOpenPositions 
-} from '../services/tickerallService.js';
+} from '../services/ticker/tickerallService.js';
 
 const TICKERALL_BASE_URL = 'https://api.tickerall.com';
 
