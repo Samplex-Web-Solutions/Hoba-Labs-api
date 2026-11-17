@@ -15,6 +15,9 @@ import tradeRoutes from './src/routes/tradeRoutes.js';
 import brokerRoutes from './src/routes/brokerRoutes.js';
 import licenseRoutes from './src/routes/licenseRoutes.js';
 
+// Admin Routes Import
+import adminRoutes from './src/routes/adminRoutes.js';
+
 // Telegram & Services Imports
 import bot, { sendDirectTelegramMessage } from './src/bot/bot.js';
 import { fetchTodayCalendar } from './src/services/news/newsService.js';
@@ -46,6 +49,7 @@ app.use('/api/execution', executionRoutes);
 app.use('/api/trades', tradeRoutes);
 app.use('/api/broker', brokerRoutes);
 app.use('/api/license', licenseRoutes);
+app.use('/api/admin', adminRoutes); // <-- Mounted successfully!
 
 // Calendar Endpoint
 app.get('/api/calendar/today', async (req, res) => {

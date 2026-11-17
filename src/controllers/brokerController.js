@@ -65,23 +65,22 @@ export async function getEADashboardStats(req, res) {
 
         if (accountInfo) {
           const info = accountInfo.data || accountInfo;
-          // Extract balance and equity from TickerAll's nested 'account' object
           const accDetails = info.account || {}; 
           
+          // Fallback extraction from positions array if account profit isn't explicitly provided
+          const rawPositions = positionsData?.positions || info.positions || [];
+          const calculatedFloatingPnl = rawPositions.reduce((sum, pos) => sum + Number(pos.profit || 0), 0);
+
           liveMetrics = {
             balance: accDetails.balance ?? info.balance ?? 0,
             equity: accDetails.equity ?? info.equity ?? 0,
-            profit: accDetails.profit ?? accDetails.floating_pnl ?? info.profit ?? info.floating_pnl ?? 0
+            profit: accDetails.profit ?? accDetails.floating_pnl ?? calculatedFloatingPnl
           };
-        }
 
-        if (positionsData) {
-          activePositions = Array.isArray(positionsData) 
-            ? positionsData 
-            : (positionsData.positions || []);
+          activePositions = Array.isArray(rawPositions) ? rawPositions : [];
         }
       } catch (tickerErr) {
-        console.warn('[TICKERALL_SYNC_WARN]: Live sync failed, fallback to zero metrics');
+        console.warn('[TICKERALL_SYNC_WARN]: Live sync failed, fallback to zero metrics', tickerErr.message);
       }
     }
 
